@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode
 } from "react";
+import { bindSession } from "../shared/api/client.js";
 
 export type Role = "citizen" | "collector" | "authority" | "sorter" | "finance" | "manager";
 
@@ -44,6 +45,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const getAccessToken = useCallback(() => tokenRef.current, []);
+
+  bindSession({ getAccessToken, setAccessToken });
 
   const login = useCallback(async (identifier: string, password: string) => {
     const res = await fetch("/api/v1/auth/login", {

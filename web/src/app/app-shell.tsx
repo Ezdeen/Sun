@@ -6,8 +6,6 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useSession, type Role } from "./session.js";
 import { ar } from "../shared/i18n/ar.js";
-import { bindSession } from "../shared/api/client.js";
-import { useEffect } from "react";
 
 const ROLE_LABELS: Record<Role, string> = {
   citizen: ar.roleCitizen,
@@ -98,13 +96,6 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 export function AppShell(): ReactNode {
   const { user, logout } = useSession();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    bindSession({
-      getAccessToken: () => null, // placeholder — token flows via fetch middleware
-      setAccessToken: () => undefined
-    });
-  }, []);
 
   if (!user) return null; // router handles login redirect
 
