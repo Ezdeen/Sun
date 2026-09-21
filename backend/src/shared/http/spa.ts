@@ -8,7 +8,8 @@ import fastifyStatic from "@fastify/static";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const WEB_DIST = process.env.WEB_DIST_DIR ?? resolve(process.cwd(), "..", "web", "dist");
+// المسار الصحيح: يبحث داخل مجلد web/dist المباشر من جذر المشروع
+const WEB_DIST = process.env.WEB_DIST_DIR ?? resolve(process.cwd(), "web", "dist");
 
 export async function registerSpa(app: FastifyInstance): Promise<void> {
   if (!existsSync(join(WEB_DIST, "index.html"))) {
