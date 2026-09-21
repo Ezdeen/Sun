@@ -1,0 +1,147 @@
+/**
+ * Arabic labels catalog (single source for UI strings).
+ */
+export const ar = {
+  appName: "منصة إدارة النفايات",
+  appTagline: "إدارة النفايات الصلبة وإعادة التدوير",
+
+  // Auth
+  login: "تسجيل الدخول",
+  logout: "تسجيل الخروج",
+  logoutAll: "إنهاء جميع الجلسات",
+  identifier: "البريد الإلكتروني أو رقم الهاتف",
+  password: "كلمة المرور",
+  newPassword: "كلمة المرور الجديدة",
+  currentPassword: "كلمة المرور الحالية",
+  displayName: "الاسم الكامل",
+  phone: "رقم الهاتف",
+  idNumber: "رقم الهوية (9 أرقام)",
+  serviceArea: "منطقة الخدمة",
+  register: "إنشاء حساب مواطن",
+  createAccount: "حساب جديد",
+  acceptInvite: "تفعيل الدعوة",
+  changePassword: "تغيير كلمة المرور",
+  loginFailed: "تعذر تسجيل الدخول — تحقق من المعطيات",
+
+  // Roles
+  roleCitizen: "مواطن",
+  roleCollector: "جامع",
+  roleAuthority: "هيئة محلية",
+  roleSorter: "منطقة فرز",
+  roleFinance: "الطبقة المالية",
+  roleManager: "مدير المنصة",
+
+  // Generic
+  dashboard: "لوحة التحكم",
+  save: "حفظ",
+  cancel: "إلغاء",
+  add: "إضافة",
+  remove: "حذف",
+  search: "بحث",
+  details: "التفاصيل",
+  back: "رجوع",
+  confirm: "تأكيد",
+  reason: "السبب",
+  status: "الحالة",
+  amount: "المبلغ",
+  date: "التاريخ",
+  weight: "الوزن (كجم)",
+  total: "الإجمالي",
+  notes: "ملاحظات",
+  loading: "جارٍ التحميل…",
+  empty: "لا توجد بيانات لعرضها",
+  errorOccurred: "حدث خطأ أثناء جلب البيانات",
+  page: "صفحة",
+  next: "التالي",
+  prev: "السابق",
+  of: "من",
+
+  // Statuses
+  requestStatus: {
+    received: "مستلم",
+    sent_to_collector: "مُرسل للجامع",
+    on_the_way: "في الطريق",
+    arrived: "وصل الجامع",
+    collected: "تم الجمع",
+    sorted: "تم الفرز",
+    sold: "تم البيع"
+  } as Record<string, string>,
+  bagStatus: {
+    pending_collection: "بانتظار الجمع",
+    collected: "تم الجمع",
+    attached: "مربوط بصفقة",
+    weighed: "موزون"
+  } as Record<string, string>,
+  payoutStatus: {
+    calculated: "محسوب",
+    approved: "معتمد",
+    paid: "مدفوع",
+    void: "ملغى"
+  } as Record<string, string>,
+  invoiceStatus: { active: "فعّالة", void: "ملغاة" } as Record<string, string>,
+  shipmentStatus: { open: "مفتوحة", sold: "مبيعة", void: "ملغاة" } as Record<string, string>,
+
+  // Domain
+  requests: "طلبات الجمع",
+  newRequest: "طلب جمع جديد",
+  requestNumber: "رقم الطلب",
+  estimate: "التقدير",
+  estimatedTotal: "الإجمالي التقديري",
+  warnings: "تنبيهات",
+  transition: "الانتقال",
+  barcode: "الباركود / رمز QR",
+  scanBarcode: "مسح باركود المواطن",
+  schedule: "جدول اليوم",
+  shipments: "الصفقات",
+  newShipment: "صفقة جديدة",
+  shipmentNumber: "رقم الصفقة",
+  bags: "الأكياس",
+  bagCode: "رمز الكيس",
+  attachBag: "ربط كيس",
+  weighBag: "وزن الكيس",
+  finalWeight: "الوزن النهائي (كجم)",
+  invoices: "الفواتير",
+  invoiceNumber: "رقم الفاتورة",
+  createInvoice: "إنشاء فاتورة",
+  buyer: "المشتري",
+  payouts: "المستحقات",
+  myPayouts: "مستحقاتي",
+  ledger: "الدفتر المالي",
+  tracking: "التتبع",
+  trackCode: "كود التتبع (CMP-…)",
+  timeline: "خط زمني",
+  chainValid: "سلسلة التتبع سليمة",
+  chainInvalid: "سلسلة التتبع مكسورة!",
+  accounts: "الحسابات",
+  invitations: "الدعوات",
+  catalog: "دليل النفايات",
+  addons: "الإضافات التشجيعية",
+  settings: "الإعدادات",
+  auditLog: "سجل التدقيق",
+  verifyChain: "تحقق من السلسلة",
+  wasteTypes: "أنواع النفايات",
+  pricePerUnit: "سعر الوحدة",
+  unit: "الوحدة",
+  category: "الفئة",
+  bonusPercent: "نسبة المكافأة",
+  splits: "نسب التوزيع",
+  platformShare: "حصة المنصة",
+  collectorsShare: "حصة الجامعين",
+  citizensShare: "حصة المواطنين",
+  readyToInvoice: "جاهزة للفوترة",
+  notFoundTitle: "الصفحة غير موجودة",
+  forbiddenTitle: "لا تملك صلاحية الوصول",
+
+  // Citizen
+  welcomeCitizen: "أهلاً بك في منصة إعادة التدوير",
+  yourRequests: "طلباتك",
+  lastRequest: "آخر طلب",
+  totalEarned: "إجمالي مستحقاتك",
+  trackYourRequest: "تتبّع طلبك",
+
+  // misc
+  version: "الإصدار",
+  household: "أسرة"
+};
+
+export type Dict = typeof ar;

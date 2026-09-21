@@ -1,0 +1,51 @@
+# Render Blueprint — one Web Service (Fastify API + React SPA) + migrations.
+# Secrets (DATABASE_URL, JWT_SECRET_KEY, IDENTITY_PEPPER) come from the
+# Render dashboard / `render secret` — never from this file.
+services:
+  - type: web
+    name: waste-platform
+    runtime: node
+    plan: starter
+    region: frankfurt
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @waste/web gen:api && pnpm --filter @waste/web build && pnpm --filter @waste/backend build
+    preDeployCommand: corepack enable && pnpm --filter @waste/backend db:migrate
+    startCommand: node backend/dist/main.js
+    healthCheckPath: /api/v1/health/ready
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        fromDatabase:
+          name: waste-db
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        sync: false # set in dashboard: openssl rand -base64 48
+      - key: JWT_KEY_ID
+        value: waste-jwt-2026-01
+      - key: IDENTITY_PEPPER
+        sync: false # set in dashboard: openssl rand -base64 48
+      - key: IDENTITY_PEPPER_KID
+        value: waste-pepper-2026-01
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: "900"
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "14"
+      - key: CORS_ORIGINS
+        value: "" # same-origin SPA — no CORS needed
+      - key: ALLOW_CITIZEN_SELF_REGISTRATION
+        value: "true"
+      - key: DEMO_MODE
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+
+databases:
+  - name: waste-db
+    databaseName: waste
+    user: waste_app
+    postgresMajor: "17"

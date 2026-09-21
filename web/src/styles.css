@@ -1,0 +1,39 @@
+@import "tailwindcss";
+@import "@fontsource/cairo/400.css";
+@import "@fontsource/cairo/600.css";
+@import "@fontsource/cairo/700.css";
+
+@theme {
+  --font-sans: "Cairo", "Noto Sans Arabic", system-ui, sans-serif;
+
+  --color-brand-50: #f0fdf4;
+  --color-brand-100: #dcfce7;
+  --color-brand-200: #bbf7d0;
+  --color-brand-300: #86efac;
+  --color-brand-400: #4ade80;
+  --color-brand-500: #22c55e;
+  --color-brand-600: #16a34a;
+  --color-brand-700: #15803d;
+  --color-brand-800: #166534;
+  --color-brand-900: #14532d;
+
+  --color-earth-50: #faf5ef;
+  --color-earth-100: #f3e7d7;
+  --color-earth-200: #e7cfae;
+  --color-earth-300: #d9b078;
+  --color-earth-500: #a97c3f;
+  --color-earth-700: #6b4d22;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  @apply bg-earth-50 text-stone-800 antialiased;
+}
+
+/* Focus visibility for accessibility */
+:focus-visible {
+  @apply outline-2 outline-offset-2 outline-brand-600;
+}

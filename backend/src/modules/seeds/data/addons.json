@@ -1,0 +1,44 @@
+[
+  {
+    "code": "WASHED",
+    "nameAr": "مغسول",
+    "nameEn": "Washed",
+    "bonusPercent": "10",
+    "appliesTo": ["PET_1L", "PET_15L", "PET_2L", "PET_3L_PLUS", "HDPE"]
+  },
+  {
+    "code": "CAP_REMOVED",
+    "nameAr": "بدون غطاء",
+    "nameEn": "Cap removed",
+    "bonusPercent": "8",
+    "appliesTo": ["PET_1L", "PET_15L", "PET_2L", "PET_3L_PLUS"]
+  },
+  {
+    "code": "LABEL_REMOVED",
+    "nameAr": "أُزيل الملصق",
+    "nameEn": "Label removed",
+    "bonusPercent": "7",
+    "appliesTo": ["PET_1L", "PET_15L", "PET_2L", "PET_3L_PLUS", "HDPE"]
+  },
+  {
+    "code": "LDPE_WASHED",
+    "nameAr": "مغسولة وجافة",
+    "nameEn": "Washed and dry",
+    "bonusPercent": "8",
+    "appliesTo": ["LDPE"]
+  },
+  {
+    "code": "DRY_SEPARATED",
+    "nameAr": "جاف ومفصول",
+    "nameEn": "Dry and separated",
+    "bonusPercent": "6",
+    "appliesTo": ["CARDBOARD", "OFFICE_PAPER"]
+  },
+  {
+    "code": "PAPER_CLEAN",
+    "nameAr": "نظيف وخالٍ من الأطعمة",
+    "nameEn": "Clean, food-free",
+    "bonusPercent": "4",
+    "appliesTo": ["OFFICE_PAPER"]
+  }
+]

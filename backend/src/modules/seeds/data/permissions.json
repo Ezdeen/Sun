@@ -1,0 +1,11 @@
+{
+  "roles": {
+    "citizen": ["catalog:read", "pricing:estimate", "request:create", "request:read", "payout:read:own"],
+    "collector": ["catalog:read", "pricing:estimate", "request:read", "request:transition", "schedule:read", "payout:read:own"],
+    "authority": ["catalog:read", "pricing:estimate", "request:read", "request:transition"],
+    "sorter": ["catalog:read", "pricing:estimate", "request:read", "request:transition", "shipment:create", "shipment:read", "bag:weigh"],
+    "finance": ["catalog:read", "pricing:estimate", "request:read", "shipment:read", "invoice:create", "ledger:read", "payout:transition"],
+    "manager": ["catalog:read", "pricing:estimate", "request:create", "request:read", "request:transition", "schedule:read", "shipment:create", "shipment:read", "bag:weigh", "invoice:create", "ledger:read", "payout:transition", "settings:update", "catalog:manage", "account:manage", "traceability:verify"]
+  },
+  "notes": "Deliberate change vs old system: finance can NOT create shipments or weigh bags (separation of duties) — see docs/ASSUMPTIONS.md #A-002. authority does NOT get ledger:read (financial data restricted to finance/manager) — see #A-004."
+}

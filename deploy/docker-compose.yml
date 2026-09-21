@@ -1,0 +1,62 @@
+# Local development stack: PostgreSQL + API + web dev server.
+# Usage: docker compose up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: waste
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d waste"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      APP_ENV: production
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/waste
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set a real secret: openssl rand -base64 48}
+      JWT_KEY_ID: waste-jwt-2026-01
+      IDENTITY_PEPPER: ${IDENTITY_PEPPER:?set a real pepper: openssl rand -base64 48}
+      IDENTITY_PEPPER_KID: waste-pepper-2026-01
+      ALLOW_CITIZEN_SELF_REGISTRATION: "true"
+      DEMO_MODE: "false"
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:8080/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["node", "backend/node_modules/drizzle-kit/migrate.js"]
+    working_dir: /app/backend
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/waste
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
+
+volumes:
+  pgdata:

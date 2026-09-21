@@ -1,0 +1,13 @@
+[
+  { "code": "PET_1L", "category": "plastic", "nameAr": "قوارير بلاستيك 1 لتر", "nameEn": "PET bottles 1L", "unit": "bottle", "pricePerUnit": "0.35", "capacityWeightKg": "0.03", "referencePricePerTon": "2000", "displayOrder": 10 },
+  { "code": "PET_15L", "category": "plastic", "nameAr": "قوارير بلاستيك 1.5 لتر", "nameEn": "PET bottles 1.5L", "unit": "bottle", "pricePerUnit": "0.45", "capacityWeightKg": "0.035", "displayOrder": 11 },
+  { "code": "PET_2L", "category": "plastic", "nameAr": "قوارير بلاستيك 2 لتر", "nameEn": "PET bottles 2L", "unit": "bottle", "pricePerUnit": "0.55", "capacityWeightKg": "0.04", "displayOrder": 12 },
+  { "code": "PET_3L_PLUS", "category": "plastic", "nameAr": "قوارير بلاستيك 3 لتر وأكثر", "nameEn": "PET bottles 3L+", "unit": "bottle", "pricePerUnit": "0.80", "capacityWeightKg": "0.07", "displayOrder": 13 },
+  { "code": "HDPE", "category": "plastic", "nameAr": "بلاستيك HDPE (عبوات منظفات وشامبو وأنابيب)", "nameEn": "HDPE containers and pipes", "unit": "kg", "pricePerUnit": "2.00", "referencePricePerTon": null, "displayOrder": 20 },
+  { "code": "LDPE", "category": "plastic", "nameAr": "أكياس نايلون LDPE", "nameEn": "LDPE nylon bags", "unit": "kg", "pricePerUnit": "2.00", "displayOrder": 21 },
+  { "code": "BOTTLE_CAP", "category": "plastic", "nameAr": "غطاء القارورة (منفصلاً)", "nameEn": "Bottle caps (separate)", "unit": "kg", "pricePerUnit": "2.00", "displayOrder": 22 },
+  { "code": "OFFICE_PAPER", "category": "paper", "nameAr": "ورق مكتبي", "nameEn": "Office paper", "unit": "kg", "pricePerUnit": "0.60", "referencePricePerTon": "600", "minWeightKg": "5", "displayOrder": 30 },
+  { "code": "CARDBOARD", "category": "paper", "nameAr": "كرتون", "nameEn": "Cardboard", "unit": "kg", "pricePerUnit": "0.60", "referencePricePerTon": "600", "minWeightKg": "5", "displayOrder": 31 },
+  { "code": "PROHIBITED_PAPER", "category": "paper", "nameAr": "ورق ملوّث/شمعي/محارم/حراري — بكيس منفصل", "nameEn": "Prohibited paper (bulk only)", "unit": "kg", "pricePerUnit": "0", "isBulkOnly": true, "displayOrder": 39 },
+  { "code": "COOKING_OIL", "category": "oil", "nameAr": "زيت القلي المستعمل", "nameEn": "Used cooking oil", "unit": "liter", "pricePerUnit": "1.50", "displayOrder": 40 }
+]

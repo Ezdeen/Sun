@@ -1,0 +1,8 @@
+[
+  { "code": "AL-ZEITOUN", "nameAr": "الزيتون", "nameEn": "Al-Zeitoun", "zone": "north", "households": 3200 },
+  { "code": "AL-BUSTAN", "nameAr": "البستان", "nameEn": "Al-Bustan", "zone": "north", "households": 2100 },
+  { "code": "AL-WADI", "nameAr": "الوادي", "nameEn": "Al-Wadi", "zone": "center", "households": 4700 },
+  { "code": "AL-RAML", "nameAr": "الرمل", "nameEn": "Al-Raml", "zone": "center", "households": 1800 },
+  { "code": "AL-SAROU", "nameAr": "السرو", "nameEn": "Al-Sarou", "zone": "south", "households": 2600 },
+  { "code": "AL-HAMRA", "nameAr": "الحمرا", "nameEn": "Al-Hamra", "zone": "south", "households": 1500 }
+]

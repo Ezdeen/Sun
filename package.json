@@ -1,0 +1,29 @@
+{
+  "name": "waste-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "منصة إدارة النفايات الصلبة وإعادة التدوير — Full-Stack Modular Monolith (Node.js + TypeScript + PostgreSQL + React)",
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=24.0.0 <25.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@node-rs/argon2",
+      "unrs-resolver"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm --filter @waste/backend dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @waste/backend db:migrate",
+    "db:seed": "pnpm --filter @waste/backend db:seed",
+    "db:seed:demo": "pnpm --filter @waste/backend db:seed:demo",
+    "test:e2e": "pnpm --filter @waste/web test:e2e",
+    "gen:api": "pnpm --filter @waste/web gen:api"
+  }
+}

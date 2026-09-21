@@ -1,0 +1,11 @@
+packages:
+  - backend
+  - web
+
+allowBuilds:
+  esbuild: set this to true or false
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@node-rs/argon2"
+  - unrs-resolver
