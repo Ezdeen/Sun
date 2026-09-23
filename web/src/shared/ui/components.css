@@ -1,0 +1,363 @@
+/*
+ * Shared UI tokens.
+ * Override within a page wrapper to customize a specific section.
+ */
+:root {
+  --ui-primary: #047857;
+  --ui-primary-hover: #065f46;
+  --ui-primary-active: #064e3b;
+  --ui-primary-soft: #ecfdf5;
+
+--ui-focus: #047857;
+  --ui-focus-soft: rgb(4 120 87 / 14%);
+
+--ui-danger: #b91c1c;
+  --ui-danger-hover: #991b1b;
+  --ui-danger-soft: rgb(185 28 28 / 12%);
+
+--ui-text: #0f172a;
+  --ui-border: #cbd5e1;
+
+--ui-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ui-duration: 180ms;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Cards                                                                      */
+/* -------------------------------------------------------------------------- */
+
+.ui-card {
+  min-inline-size: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background-color: #ffffff;
+
+box-shadow:
+    0 1px 2px rgb(15 23 42 / 3%),
+    0 5px 18px -10px rgb(15 23 42 / 15%);
+}
+
+.ui-stat-value {
+  color: var(--ui-primary-hover);
+}
+
+.ui-icon-surface {
+  color: var(--ui-primary);
+  background-color: var(--ui-primary-soft);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Buttons                                                                    */
+/* -------------------------------------------------------------------------- */
+
+.ui-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+
+min-block-size: 2.75rem;
+  max-inline-size: 100%;
+  padding-block: 0.625rem;
+  padding-inline: 1rem;
+
+border: 1px solid transparent;
+  border-radius: 0.75rem;
+
+font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.5;
+
+cursor: pointer;
+  touch-action: manipulation;
+
+transition:
+    background-color var(--ui-duration) ease,
+    border-color var(--ui-duration) ease,
+    color var(--ui-duration) ease,
+    box-shadow var(--ui-duration) ease,
+    transform var(--ui-duration) var(--ui-ease);
+}
+
+.ui-button--sm {
+  min-block-size: 2.75rem;
+  padding-block: 0.5rem;
+  padding-inline: 0.875rem;
+  font-size: 0.8125rem;
+}
+
+.ui-button--lg {
+  min-block-size: 3.25rem;
+  padding-block: 0.75rem;
+  padding-inline: 1.5rem;
+  font-size: 1rem;
+}
+
+.ui-button--primary {
+  background-color: var(--ui-primary);
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgb(4 120 87 / 14%);
+}
+
+.ui-button--secondary {
+  border-color: var(--ui-border);
+  background-color: #ffffff;
+  color: #334155;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+}
+
+.ui-button--danger {
+  background-color: var(--ui-danger);
+  color: #ffffff;
+  box-shadow: 0 2px 4px rgb(185 28 28 / 12%);
+}
+
+.ui-button--ghost {
+  background-color: transparent;
+  color: var(--ui-primary-hover);
+}
+
+/* Keyboard focus stays visible independently of hover. */
+.ui-button:focus-visible,
+.ui-table-wrap:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 3px;
+}
+
+.ui-button:disabled {
+  border-color: #e2e8f0;
+  background-color: #f1f5f9;
+  color: #64748b;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.ui-button[aria-busy="true"]:disabled {
+  cursor: progress;
+}
+
+/* Hover effects only on devices that actually support hover. */
+@media (hover: hover) and (pointer: fine) {
+  .ui-button:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+
+.ui-button--primary:not(:disabled):hover {
+    background-color: var(--ui-primary-hover);
+    box-shadow: 0 5px 12px rgb(4 120 87 / 18%);
+  }
+
+.ui-button--secondary:not(:disabled):hover {
+    border-color: #94a3b8;
+    background-color: #f8fafc;
+  }
+
+.ui-button--danger:not(:disabled):hover {
+    background-color: var(--ui-danger-hover);
+    box-shadow: 0 5px 12px rgb(185 28 28 / 16%);
+  }
+
+.ui-button--ghost:not(:disabled):hover {
+    background-color: var(--ui-primary-soft);
+  }
+}
+
+.ui-button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
+}
+
+.ui-button--primary:not(:disabled):active {
+  background-color: var(--ui-primary-active);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Inputs & native selects                                                    */
+/* -------------------------------------------------------------------------- */
+
+.ui-control {
+  display: block;
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 3rem;
+
+padding-block: 0.75rem;
+  padding-inline: 0.875rem;
+
+border: 1px solid var(--ui-border);
+  border-radius: 0.75rem;
+
+background-color: #ffffff;
+  color: var(--ui-text);
+
+/* 16px avoids unwanted input zoom in common mobile browsers. */
+  font-size: 1rem;
+  line-height: 1.5;
+
+box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+
+transition:
+    border-color var(--ui-duration) ease,
+    background-color var(--ui-duration) ease,
+    box-shadow var(--ui-duration) ease;
+}
+
+.ui-control::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.ui-control:focus {
+  border-color: var(--ui-focus);
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--ui-focus-soft);
+}
+
+.ui-control--invalid {
+  border-color: var(--ui-danger);
+}
+
+.ui-control--invalid:focus {
+  border-color: var(--ui-danger);
+  outline-color: var(--ui-danger);
+  box-shadow: 0 0 0 4px var(--ui-danger-soft);
+}
+
+.ui-control:disabled {
+  border-color: #e2e8f0;
+  background-color: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.ui-control[readonly] {
+  background-color: #f8fafc;
+}
+
+.ui-select {
+  appearance: none;
+  padding-inline-end: 2.75rem;
+  cursor: pointer;
+}
+
+.ui-control[multiple] {
+  min-block-size: 8rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-control:not(:disabled):not(:focus):not(
+      .ui-control--invalid
+    ):hover {
+    border-color: #94a3b8;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Alerts & tables                                                            */
+/* -------------------------------------------------------------------------- */
+
+.ui-alert {
+  border-inline-start-width: 3px;
+}
+
+.ui-table tbody > tr {
+  transition: background-color 140ms ease;
+}
+
+.ui-table tbody > tr:focus-within {
+  background-color: #f8fafc;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-table tbody > tr:hover {
+    background-color: #f8fafc;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Animation                                                                  */
+/* -------------------------------------------------------------------------- */
+
+.ui-spinner {
+  display: inline-block;
+  flex-shrink: 0;
+
+inline-size: 1rem;
+  block-size: 1rem;
+
+border: 2px solid currentColor;
+  border-block-start-color: transparent;
+  border-radius: 50%;
+
+animation: ui-spin 750ms linear infinite;
+}
+
+.ui-loading-spinner {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  color: var(--ui-primary);
+}
+
+.ui-enter {
+  animation: ui-enter 280ms var(--ui-ease) both;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ui-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Respect the user's motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-button,
+  .ui-control,
+  .ui-table tbody > tr {
+    transition: none;
+  }
+
+.ui-enter,
+  .ui-spinner {
+    animation: none;
+  }
+
+.ui-button:not(:disabled):hover,
+  .ui-button:not(:disabled):active {
+    transform: none;
+  }
+}
+
+/* Keep clear focus boundaries in forced-colors mode. */
+@media (forced-colors: active) {
+  .ui-button:focus-visible,
+  .ui-control:focus,
+  .ui-table-wrap:focus-visible {
+    outline: 2px solid Highlight;
+    box-shadow: none;
+  }
+
+.ui-button {
+    border-color: ButtonText;
+  }
+
+.ui-button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+  }
+}
