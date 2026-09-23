@@ -1,158 +1,640 @@
-/**
- * Shared UI primitives — small, focused, RTL-first (logical properties).
- */
-import type { ReactNode } from "react";
+"use client";
+
+import {
+  forwardRef,
+  useId,
+  type ReactNode,
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type InputHTMLAttributes,
+  type SelectHTMLAttributes,
+  type TdHTMLAttributes
+} from "react";
+
+import "./ui.css";
+
+function cx(...values: Array<string | false | null | undefined>) {
+  return values.filter(Boolean).join(" ");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Decorative icons                                                           */
+/* -------------------------------------------------------------------------- */
+
+type IconName =
+  | "info"
+  | "warn"
+  | "error"
+  | "success"
+  | "chevron"
+  | "empty";
+
+const ICON_PATHS: Record<IconName, string> = {
+  info: "M12 8h.01 M12 11v6",
+  warn: "M12 8v5 M12 16h.01",
+  error: "m9 9 6 6 M15 9l-6 6",
+  success: "m8 12 3 3 5-6",
+  chevron: "m6 9 6 6 6-6",
+  empty: "M4 7h6l2 2h8v10H4Z M4 7V5h6l2 2"
+};
+
+function Icon({
+  name,
+  className = ""
+}: {
+  name: IconName;
+  className?: string;
+}) {
+  const circular =
+    name === "info" || name === "error" || name === "success";
+
+return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cx("h-5 w-5 shrink-0", className)}
+      aria-hidden="true"
+      focusable="false"
+    >
+      {circular ? <circle cx="12" cy="12" r="9" /> : null}
+
+{name === "warn" ? (
+        <path d="M12 3 22 20H2Z" />
+      ) : null}
+
+<path d={ICON_PATHS[name]} />
+    </svg>
+  );
+}
+
+function Spinner({ className = "" }: { className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cx("ui-spinner", className)}
+    />
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Page header                                                                */
+/* -------------------------------------------------------------------------- */
+
+type PageHeaderProps = {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  className?: string;
+};
 
 export function PageHeader({
   title,
   subtitle,
-  actions
-}: {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-}) {
+  actions,
+  className
+}: PageHeaderProps) {
   return (
-    <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-bold text-stone-900">{title}</h1>
-        {subtitle ? <p className="mt-1 text-sm text-stone-500">{subtitle}</p> : null}
+    <header
+      className={cx(
+        "mb-7 flex flex-wrap items-center justify-between gap-4",
+        className
+      )}
+    >
+      <div className="min-w-0">
+        <h1 className="text-2xl font-bold leading-snug text-slate-900 sm:text-3xl">
+          {title}
+        </h1>
+
+{subtitle ? (
+          <p className="mt-2 max-w-2xl text-sm leading-7 text-slate-600">
+            {subtitle}
+          </p>
+        ) : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+
+{actions ? (
+        <div className="flex max-w-full flex-wrap items-center gap-2">
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-xl border border-stone-200 bg-white p-5 shadow-sm ${className}`}>
-      {children}
-    </div>
-  );
-}
+/* -------------------------------------------------------------------------- */
+/* Cards                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type CardProps = HTMLAttributes<HTMLDivElement> & {
+  children: ReactNode;
+  padding?: "none" | "sm" | "md" | "lg";
+  animated?: boolean;
+};
+
+const CARD_PADDING = {
+  none: "",
+  sm: "p-4",
+  md: "p-5 sm:p-6",
+  lg: "p-6 sm:p-8"
+};
+
+export const Card = forwardRef<HTMLDivElement, CardProps>(
+  function Card(
+    {
+      children,
+      className,
+      padding = "md",
+      animated = false,
+      ...props
+    },
+    ref
+  ) {
+    return (
+      <div
+        {...props}
+        ref={ref}
+        className={cx(
+          "ui-card",
+          CARD_PADDING[padding],
+          animated && "ui-enter",
+          className
+        )}
+      >
+        {children}
+      </div>
+    );
+  }
+);
+
+type StatCardProps = {
+  label: string;
+  value: string | number;
+  hint?: string;
+  icon?: ReactNode;
+  className?: string;
+};
 
 export function StatCard({
   label,
   value,
-  hint
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
+  hint,
+  icon,
+  className
+}: StatCardProps) {
   return (
-    <Card className="min-w-40">
-      <div className="text-sm text-stone-500">{label}</div>
-      <div className="mt-1 text-2xl font-bold text-brand-700">{value}</div>
-      {hint ? <div className="mt-1 text-xs text-stone-400">{hint}</div> : null}
+    <Card className={cx("min-w-40", className)}>
+      <div className="flex items-start justify-between gap-4">
+        <dl className="min-w-0">
+          <dt className="text-sm font-medium leading-6 text-slate-600">
+            {label}
+          </dt>
+
+<dd className="ui-stat-value mt-3 break-words text-3xl font-bold leading-tight tabular-nums">
+            <bdi>{value}</bdi>
+          </dd>
+
+{hint ? (
+            <dd className="mt-2 text-xs leading-6 text-slate-600">
+              {hint}
+            </dd>
+          ) : null}
+        </dl>
+
+{icon ? (
+          <span
+            aria-hidden="true"
+            className="ui-icon-surface flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl"
+          >
+            {icon}
+          </span>
+        ) : null}
+      </div>
     </Card>
   );
 }
 
-export function Button({
-  children,
-  onClick,
-  type = "button",
-  variant = "primary",
-  disabled,
-  className = ""
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  type?: "button" | "submit";
+/* -------------------------------------------------------------------------- */
+/* Buttons                                                                    */
+/* -------------------------------------------------------------------------- */
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "danger" | "ghost";
-  disabled?: boolean;
-  className?: string;
-}) {
-  const styles: Record<string, string> = {
-    primary: "bg-brand-600 text-white hover:bg-brand-700",
-    secondary: "bg-white text-stone-700 border border-stone-300 hover:bg-stone-50",
-    danger: "bg-red-600 text-white hover:bg-red-700",
-    ghost: "text-brand-700 hover:bg-brand-50"
-  };
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex items-center justify-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styles[variant]} ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-export function Input({
-  label,
-  ...props
-}: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
-      <input
-        {...props}
-        className="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-      />
-    </label>
-  );
-}
-
-export function Select({
-  label,
-  children,
-  ...props
-}: { label: string; children: ReactNode } & React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium text-stone-700">{label}</span>
-      <select
-        {...props}
-        className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-      >
-        {children}
-      </select>
-    </label>
-  );
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  received: "bg-stone-100 text-stone-700",
-  sent_to_collector: "bg-amber-100 text-amber-800",
-  on_the_way: "bg-blue-100 text-blue-800",
-  arrived: "bg-indigo-100 text-indigo-800",
-  collected: "bg-brand-100 text-brand-800",
-  sorted: "bg-cyan-100 text-cyan-800",
-  sold: "bg-emerald-100 text-emerald-800",
-  calculated: "bg-stone-100 text-stone-700",
-  approved: "bg-amber-100 text-amber-800",
-  paid: "bg-emerald-100 text-emerald-800",
-  void: "bg-red-100 text-red-700",
-  open: "bg-blue-100 text-blue-800",
-  active: "bg-emerald-100 text-emerald-800",
-  pending_collection: "bg-stone-100 text-stone-700",
-  attached: "bg-amber-100 text-amber-800",
-  weighed: "bg-brand-100 text-brand-800"
+  size?: "sm" | "md" | "lg";
+  loading?: boolean;
+  loadingText?: string;
+  startIcon?: ReactNode;
+  endIcon?: ReactNode;
+  fullWidth?: boolean;
 };
 
-export function StatusBadge({ code, label }: { code: string; label: string }) {
-  const color = STATUS_COLORS[code] ?? "bg-stone-100 text-stone-700";
-  return <span className={`inline-block rounded-full px-3 py-0.5 text-xs font-semibold ${color}`}>{label}</span>;
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  function Button(
+    {
+      children,
+      type = "button",
+      variant = "primary",
+      size = "md",
+      loading = false,
+      loadingText,
+      startIcon,
+      endIcon,
+      fullWidth = false,
+      disabled,
+      className,
+      "aria-busy": ariaBusy,
+      ...props
+    },
+    ref
+  ) {
+    return (
+      <button
+        {...props}
+        ref={ref}
+        type={type}
+        disabled={disabled || loading}
+        aria-busy={loading ? true : ariaBusy}
+        className={cx(
+          "ui-button",
+          `ui-button--${variant}`,
+          `ui-button--${size}`,
+          fullWidth && "w-full",
+          className
+        )}
+      >
+        {loading ? (
+          <Spinner />
+        ) : startIcon ? (
+          <span
+            aria-hidden="true"
+            className="inline-flex shrink-0 items-center"
+          >
+            {startIcon}
+          </span>
+        ) : null}
+
+<span>
+          {loading && loadingText ? loadingText : children}
+        </span>
+
+{!loading && endIcon ? (
+          <span
+            aria-hidden="true"
+            className="inline-flex shrink-0 items-center"
+          >
+            {endIcon}
+          </span>
+        ) : null}
+      </button>
+    );
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/* Accessible field structure                                                 */
+/* -------------------------------------------------------------------------- */
+
+type FieldBaseProps = {
+  label: string;
+  helperText?: string;
+  error?: string;
+  containerClassName?: string;
+};
+
+type FieldShellProps = FieldBaseProps & {
+  id: string;
+  required?: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+};
+
+function FieldShell({
+  id,
+  label,
+  helperText,
+  error,
+  required,
+  disabled,
+  containerClassName,
+  children
+}: FieldShellProps) {
+  return (
+    <div className={cx("min-w-0", containerClassName)}>
+      <label
+        htmlFor={id}
+        className={cx(
+          "mb-2 block text-sm font-semibold leading-6",
+          disabled ? "text-slate-600" : "text-slate-800"
+        )}
+      >
+        {label}
+
+{required ? (
+          <span className="ms-1 text-red-700" aria-hidden="true">
+            *
+          </span>
+        ) : null}
+      </label>
+
+{children}
+
+{helperText ? (
+        <p
+          id={`${id}-hint`}
+          className="mt-2 text-xs leading-6 text-slate-600"
+        >
+          {helperText}
+        </p>
+      ) : null}
+
+{error ? (
+        <p
+          id={`${id}-error`}
+          className="mt-2 flex items-start gap-1.5 text-xs font-medium leading-6 text-red-700"
+        >
+          <Icon name="error" className="mt-0.5 h-4 w-4" />
+          <span>{error}</span>
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
-export function Table({ head, children }: { head: string[]; children: ReactNode }) {
+function fieldDescription(
+  existing: string | undefined,
+  id: string,
+  helperText: string | undefined,
+  error: string | undefined
+) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
-      <table className="w-full text-right text-sm">
-        <thead className="border-b border-stone-200 bg-stone-50 text-xs text-stone-500">
+    cx(
+      existing,
+      helperText && `${id}-hint`,
+      error && `${id}-error`
+    ) || undefined
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Input                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type InputProps = InputHTMLAttributes<HTMLInputElement> & FieldBaseProps;
+
+export const Input = forwardRef<HTMLInputElement, InputProps>(
+  function Input(
+    {
+      label,
+      helperText,
+      error,
+      containerClassName,
+      id,
+      className,
+      required,
+      disabled,
+      "aria-describedby": describedBy,
+      "aria-invalid": ariaInvalid,
+      ...props
+    },
+    ref
+  ) {
+    const generatedId = useId();
+    const inputId = id ?? generatedId;
+    const invalid = Boolean(error) || ariaInvalid === true || ariaInvalid === "true";
+
+return (
+      <FieldShell
+        id={inputId}
+        label={label}
+        helperText={helperText}
+        error={error}
+        required={required}
+        disabled={disabled}
+        containerClassName={containerClassName}
+      >
+        <input
+          {...props}
+          ref={ref}
+          id={inputId}
+          required={required}
+          disabled={disabled}
+          aria-invalid={error ? true : ariaInvalid}
+          aria-describedby={fieldDescription(
+            describedBy,
+            inputId,
+            helperText,
+            error
+          )}
+          className={cx(
+            "ui-control",
+            invalid && "ui-control--invalid",
+            className
+          )}
+        />
+      </FieldShell>
+    );
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/* Select                                                                     */
+/* -------------------------------------------------------------------------- */
+
+type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & FieldBaseProps;
+
+export const Select = forwardRef<HTMLSelectElement, SelectProps>(
+  function Select(
+    {
+      label,
+      helperText,
+      error,
+      containerClassName,
+      id,
+      className,
+      children,
+      required,
+      disabled,
+      multiple,
+      size,
+      "aria-describedby": describedBy,
+      "aria-invalid": ariaInvalid,
+      ...props
+    },
+    ref
+  ) {
+    const generatedId = useId();
+    const selectId = id ?? generatedId;
+    const invalid = Boolean(error) || ariaInvalid === true || ariaInvalid === "true";
+    const showChevron = !multiple && (!size || size === 1);
+
+return (
+      <FieldShell
+        id={selectId}
+        label={label}
+        helperText={helperText}
+        error={error}
+        required={required}
+        disabled={disabled}
+        containerClassName={containerClassName}
+      >
+        <div className="relative">
+          <select
+            {...props}
+            ref={ref}
+            id={selectId}
+            required={required}
+            disabled={disabled}
+            multiple={multiple}
+            size={size}
+            aria-invalid={error ? true : ariaInvalid}
+            aria-describedby={fieldDescription(
+              describedBy,
+              selectId,
+              helperText,
+              error
+            )}
+            className={cx(
+              "ui-control",
+              showChevron && "ui-select",
+              invalid && "ui-control--invalid",
+              className
+            )}
+          >
+            {children}
+          </select>
+
+{showChevron ? (
+            <Icon
+              name="chevron"
+              className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-slate-500"
+            />
+          ) : null}
+        </div>
+      </FieldShell>
+    );
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/* Status badges                                                              */
+/* -------------------------------------------------------------------------- */
+
+type StatusTone =
+  | "neutral"
+  | "amber"
+  | "blue"
+  | "indigo"
+  | "emerald"
+  | "cyan"
+  | "red";
+
+const STATUS_TONES: Record<string, StatusTone> = {
+  received: "neutral",
+  sent_to_collector: "amber",
+  on_the_way: "blue",
+  arrived: "indigo",
+  collected: "emerald",
+  sorted: "cyan",
+  sold: "emerald",
+  calculated: "neutral",
+  approved: "amber",
+  paid: "emerald",
+  void: "red",
+  open: "blue",
+  active: "emerald",
+  pending_collection: "neutral",
+  attached: "amber",
+  weighed: "emerald"
+};
+
+const BADGE_STYLES: Record<StatusTone, string> = {
+  neutral: "border-slate-200 bg-slate-100 text-slate-700",
+  amber: "border-amber-200 bg-amber-50 text-amber-800",
+  blue: "border-blue-200 bg-blue-50 text-blue-800",
+  indigo: "border-indigo-200 bg-indigo-50 text-indigo-800",
+  emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  cyan: "border-cyan-200 bg-cyan-50 text-cyan-800",
+  red: "border-red-200 bg-red-50 text-red-800"
+};
+
+export function StatusBadge({
+  code,
+  label,
+  className
+}: {
+  code: string;
+  label: string;
+  className?: string;
+}) {
+  const tone = STATUS_TONES[code] ?? "neutral";
+
+return (
+    <span
+      className={cx(
+        "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-5",
+        BADGE_STYLES[tone],
+        className
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className="h-1.5 w-1.5 shrink-0 rounded-full bg-current"
+      />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Table                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type TableProps = {
+  head: string[];
+  children: ReactNode;
+  caption?: string;
+  className?: string;
+};
+
+export function Table({
+  head,
+  children,
+  caption = "جدول البيانات",
+  className
+}: TableProps) {
+  return (
+    <div
+      role="region"
+      aria-label={caption}
+      tabIndex={0}
+      className={cx(
+        "ui-table-wrap overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm",
+        className
+      )}
+    >
+      <table className="ui-table w-full text-start text-sm">
+        <caption className="sr-only">{caption}</caption>
+
+<thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
           <tr>
-            {head.map((h) => (
-              <th key={h} className="px-4 py-3 font-semibold">
-                {h}
+            {head.map((heading, index) => (
+              <th
+                key={`${heading}-${index}`}
+                scope="col"
+                className="whitespace-nowrap px-4 py-4 text-start font-semibold"
+              >
+                {heading}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-stone-100">{children}</tbody>
+
+<tbody className="divide-y divide-slate-100">
+          {children}
+        </tbody>
       </table>
     </div>
   );
@@ -160,52 +642,177 @@ export function Table({ head, children }: { head: string[]; children: ReactNode 
 
 export function Td({
   children,
-  className = "",
-  dir
-}: {
-  children: ReactNode;
-  className?: string;
-  dir?: "rtl" | "ltr";
-}) {
+  className,
+  ...props
+}: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={`px-4 py-3 ${className}`} dir={dir}>
+    <td
+      {...props}
+      className={cx(
+        "px-4 py-4 align-middle leading-6 text-slate-700",
+        className
+      )}
+    >
       {children}
     </td>
   );
 }
 
-export function Loading({ label = "جارٍ التحميل…" }: { label?: string }) {
+/* -------------------------------------------------------------------------- */
+/* Loading & empty states                                                     */
+/* -------------------------------------------------------------------------- */
+
+export function Loading({
+  label = "جارٍ التحميل…"
+}: {
+  label?: string;
+}) {
   return (
-    <div className="flex items-center justify-center py-16 text-stone-500">
-      <span className="me-3 inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
-      {label}
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-600"
+    >
+      <Spinner className="ui-loading-spinner" />
+      <span>{label}</span>
     </div>
   );
 }
 
-export function EmptyState({ label = "لا توجد بيانات لعرضها" }: { label?: string }) {
+type EmptyStateProps = {
+  label?: string;
+  description?: string;
+  action?: ReactNode;
+};
+
+export function EmptyState({
+  label = "لا توجد بيانات لعرضها",
+  description,
+  action
+}: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-stone-300 bg-white py-16 text-stone-400">
-      <span className="text-3xl">🗂️</span>
-      <span className="text-sm">{label}</span>
+    <div className="flex flex-col items-center rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-6 py-14 text-center">
+      <span className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500 shadow-sm">
+        <Icon name="empty" className="h-7 w-7" />
+      </span>
+
+<p className="text-base font-semibold text-slate-800">
+        {label}
+      </p>
+
+{description ? (
+        <p className="mt-2 max-w-sm text-sm leading-7 text-slate-600">
+          {description}
+        </p>
+      ) : null}
+
+{action ? <div className="mt-5">{action}</div> : null}
     </div>
   );
 }
 
-export function ErrorState({ message = "حدث خطأ أثناء جلب البيانات" }: { message?: string }) {
+/* -------------------------------------------------------------------------- */
+/* Alerts                                                                     */
+/* -------------------------------------------------------------------------- */
+
+type AlertKind = "info" | "warn" | "error" | "success";
+
+type AlertProps = Omit<HTMLAttributes<HTMLDivElement>, "title"> & {
+  kind?: AlertKind;
+  title?: ReactNode;
+  children: ReactNode;
+  action?: ReactNode;
+  announcement?: "polite" | "assertive" | "off";
+  animated?: boolean;
+};
+
+const ALERT_STYLES: Record<AlertKind, string> = {
+  info: "border-blue-200 bg-blue-50 text-blue-900",
+  warn: "border-amber-200 bg-amber-50 text-amber-900",
+  error: "border-red-200 bg-red-50 text-red-900",
+  success: "border-emerald-200 bg-emerald-50 text-emerald-900"
+};
+
+export function Alert({
+  kind = "info",
+  title,
+  children,
+  action,
+  announcement = kind === "error" ? "assertive" : "polite",
+  animated = false,
+  className,
+  role,
+  "aria-live": ariaLive,
+  ...props
+}: AlertProps) {
+  const defaultRole =
+    announcement === "off"
+      ? undefined
+      : announcement === "assertive"
+        ? "alert"
+        : "status";
+
+return (
+    <div
+      {...props}
+      role={role ?? defaultRole}
+      aria-live={ariaLive ?? announcement}
+      aria-atomic="true"
+      className={cx(
+        "ui-alert flex items-start gap-3 rounded-2xl border p-4 sm:p-5",
+        ALERT_STYLES[kind],
+        animated && "ui-enter",
+        className
+      )}
+    >
+      <Icon name={kind} className="mt-0.5" />
+
+<div className="min-w-0 flex-1">
+        {title ? (
+          <p className="mb-1 text-sm font-bold leading-6">
+            {title}
+          </p>
+        ) : null}
+
+<div className="break-words text-sm leading-7">
+          {children}
+        </div>
+
+{action ? <div className="mt-3">{action}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+export function ErrorState({
+  message = "حدث خطأ أثناء جلب البيانات",
+  onRetry,
+  retrying = false
+}: {
+  message?: string;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700">
+    <Alert
+      kind="error"
+      title="تعذّر إكمال العملية"
+      action={
+        onRetry ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onRetry}
+            loading={retrying}
+            loadingText="جارٍ إعادة المحاولة…"
+          >
+            إعادة المحاولة
+          </Button>
+        ) : null
+      }
+    >
       {message}
-    </div>
+    </Alert>
   );
-}
-
-export function Alert({ kind = "info", children }: { kind?: "info" | "warn" | "error" | "success"; children: ReactNode }) {
-  const styles = {
-    info: "bg-blue-50 text-blue-800 border-blue-200",
-    warn: "bg-amber-50 text-amber-800 border-amber-200",
-    error: "bg-red-50 text-red-700 border-red-200",
-    success: "bg-emerald-50 text-emerald-800 border-emerald-200"
-  };
-  return <div className={`rounded-lg border p-3 text-sm ${styles[kind]}`}>{children}</div>;
 }
