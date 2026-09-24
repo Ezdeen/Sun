@@ -3,12 +3,14 @@
  * requests, payouts.
  */
 import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../shared/api/client.js";
 import { ar } from "../../shared/i18n/ar.js";
 import {
-  Card, EmptyState, ErrorState, Loading, PageHeader, StatCard, StatusBadge, Table, Td
+  Alert, Button, Card, EmptyState, ErrorState, Input, Loading, PageHeader, StatCard, StatusBadge, Table, Td
 } from "../../shared/ui/components.js";
+import { LazyQrScanner } from "../../shared/ui/lazy-qr-scanner.js";
 import { formatDateTime, formatMoney } from "../../shared/lib/format.js";
 import { TransitionAction, nextStepFor } from "../../shared/ui/transition-action.js";
 
@@ -253,22 +255,112 @@ export function CollectorPayouts(): React.ReactNode {
   );
 }
 
-/** Scan page — quick barcode verification before collection transition. */
+/** Scan page — مسح QR المواطن ← إيجاد الطلب المطابق ← تأكيد الجمع. */
 export function CollectorScan(): React.ReactNode {
+  const [scanning, setScanning] = useState(false);
+  const [code, setCode] = useState<string | null>(null);
+  const [manual, setManual] = useState("");
+
+  const schedule = useQuery({
+    queryKey: ["collector-schedule"],
+    queryFn: async () => (await api.GET("/collector/schedule")).data as unknown as ScheduleData | undefined
+  });
+
+  const match = useMemo(() => {
+    if (!code || !schedule.data) return undefined;
+    return schedule.data.queue.find((q) => code === q.qrPayload || code === q.combinedHash);
+  }, [code, schedule.data]);
+
+  const reset = () => {
+    setCode(null);
+    setManual("");
+    setScanning(false);
+  };
+
   return (
     <>
-      <PageHeader title={ar.scanBarcode} subtitle="ادخل باركود المواطن لتأكيد الجمع من صفحة الطلب" />
-      <Card>
-        <p className="text-sm text-stone-500">
-          استخدم هذه الشاشة لقراءة الباركود المطبوع على ملصق أكياس المواطن، ثم انتقل إلى الطلب المطابق لتأكيد الجمع.
-          الباركود بصيغة <span className="font-mono" dir="ltr">CMP-…</span> أو <span className="font-mono" dir="ltr">WASTE-QR:v1:CMP-…</span>
-        </p>
-        <div className="mt-4">
-          <Link to="/collector/schedule">
-            <span className="text-brand-700 hover:underline">الانتقال إلى جدول العمل ←</span>
-          </Link>
+      <PageHeader title={ar.scanBarcode} subtitle="امسح رمز QR المعروض على هاتف المواطن أو المطبوع على ملصق الأكياس" />
+
+      {!code ? (
+        <Card>
+          {scanning ? (
+            <LazyQrScanner
+              onScan={(text) => {
+                setCode(text);
+                setScanning(false);
+              }}
+              onCancel={() => setScanning(false)}
+            />
+          ) : (
+            <Button onClick={() => setScanning(true)}>📷 تشغيل الكاميرا</Button>
+          )}
+
+          <form
+            className="mt-5 flex flex-wrap items-end gap-3 border-t border-stone-100 pt-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (manual.trim()) setCode(manual.trim());
+            }}
+          >
+            <div className="min-w-48 flex-1">
+              <Input
+                label="أو أدخل الكود يدوياً"
+                dir="ltr"
+                placeholder="CMP-… أو WASTE-QR:v1:CMP-…"
+                value={manual}
+                onChange={(e) => setManual(e.target.value)}
+              />
+            </div>
+            <Button type="submit" variant="secondary" disabled={manual.trim().length < 5}>بحث</Button>
+          </form>
+        </Card>
+      ) : schedule.isLoading ? (
+        <Loading />
+      ) : schedule.isError || !schedule.data ? (
+        <ErrorState />
+      ) : !match ? (
+        <div className="space-y-3">
+          <Alert kind="warn">لا يوجد طلب مطابق لهذا الرمز في جدولك (قد يكون مُسنداً لجامع آخر أو خارج منطقتك).</Alert>
+          <Button variant="secondary" onClick={reset}>مسح رمز آخر</Button>
         </div>
-      </Card>
+      ) : (
+        <Card>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-bold">#{match.requestNumber}</div>
+              <div className="text-sm text-stone-500">{match.citizenName ?? "مواطن"} · {match.citizenPhone ?? ""}</div>
+            </div>
+            <StatusBadge code={match.status} label={ar.requestStatus[match.status] ?? match.status} />
+          </div>
+
+          {match.status !== "arrived" ? (
+            <div className="mt-3">
+              <Alert kind="info">
+                لتأكيد الجمع يجب أولاً تسجيل الوصول. الحالة الحالية: {ar.requestStatus[match.status] ?? match.status}.
+              </Alert>
+            </div>
+          ) : null}
+
+          <div className="mt-4 max-w-sm border-t border-stone-100 pt-4">
+            <TransitionAction
+              key={`${match.id}-${match.version}`}
+              requestId={match.id}
+              currentStatus={match.status}
+              version={match.version}
+              nextInfo={nextStepFor(match.status)}
+              role="collector"
+              initialBarcode={code}
+            />
+          </div>
+
+          <div className="mt-4 flex gap-3">
+            <Button variant="secondary" onClick={reset}>مسح رمز آخر</Button>
+            <Link to={`/collector/requests/${match.id}`}>
+              <Button variant="ghost">{ar.details} ←</Button>
+            </Link>
+          </div>
+        </Card>
+      )}
     </>
   );
 }
