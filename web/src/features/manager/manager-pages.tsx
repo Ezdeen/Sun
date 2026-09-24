@@ -10,7 +10,7 @@ import {
   Alert, Button, Card, EmptyState, ErrorState, Input, Loading, PageHeader, Select,
   StatCard, StatusBadge, Table, Td
 } from "../../shared/ui/components.js";
-import { formatDateTime, formatMoney, shortHash } from "../../shared/lib/format.js";
+import { formatDateTime, formatMoney } from "../../shared/lib/format.js";
 
 interface ManagerDashboardData {
   requestStatusCounts: Record<string, number>;
@@ -92,9 +92,23 @@ export function ManagerDashboard(): React.ReactNode {
   );
 }
 
+interface AccountItem {
+  id: string;
+  role: string;
+  displayName: string;
+  email: string;
+  phone?: string | null;
+  status: string;
+  createdAt: string;
+}
+
 interface AccountsData {
-  items: { id: string; role: string; displayName: string; email: string; status: string; createdAt: string }[];
+  items: AccountItem[];
   total: number;
+}
+
+interface CatalogAreasData {
+  serviceAreas: { id: string; code: string; nameAr: string }[];
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -102,8 +116,149 @@ const ROLE_LABELS: Record<string, string> = {
   sorter: ar.roleSorter, finance: ar.roleFinance, manager: ar.roleManager
 };
 
+/** Roles that require a service area assignment. */
+const AREA_ROLES = new Set(["citizen", "collector", "authority"]);
+
+function CreateAccountForm({ onCreated }: { onCreated: () => void }): React.ReactNode {
+  const areas = useQuery({
+    queryKey: ["catalog"],
+    queryFn: async () => (await api.GET("/catalog")).data as unknown as CatalogAreasData | undefined
+  });
+  const [form, setForm] = useState({
+    displayName: "", email: "", phone: "", password: "", role: "collector", serviceAreaId: ""
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.POST("/admin/accounts", {
+        body: {
+          displayName: form.displayName,
+          email: form.email,
+          phone: form.phone || undefined,
+          password: form.password,
+          role: form.role as never,
+          serviceAreaId: AREA_ROLES.has(form.role) ? form.serviceAreaId || undefined : undefined
+        }
+      });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر إنشاء الحساب");
+      return res.data;
+    },
+    onSuccess: () => {
+      setError(null);
+      setForm({ displayName: "", email: "", phone: "", password: "", role: "collector", serviceAreaId: "" });
+      setOpen(false);
+      onCreated();
+    },
+    onError: (err) => setError(err.message)
+  });
+
+  if (!open) {
+    return (
+      <div className="mb-4">
+        <Button onClick={() => setOpen(true)}>＋ إضافة حساب جديد</Button>
+      </div>
+    );
+  }
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-bold">إضافة حساب جديد</h2>
+        <button className="text-sm text-stone-500 hover:underline" onClick={() => setOpen(false)}>إلغاء ✕</button>
+      </div>
+      <form
+        className="grid gap-3 sm:grid-cols-2"
+        onSubmit={(e) => { e.preventDefault(); createMutation.mutate(); }}
+      >
+        <Input label={ar.displayName} required value={form.displayName}
+          onChange={(e) => setForm({ ...form, displayName: e.target.value })} />
+        <Input label="البريد الإلكتروني" type="email" dir="ltr" required value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        <Input label={ar.phone} dir="ltr" value={form.phone}
+          onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        <Input label={ar.password} type="password" dir="ltr" required minLength={8} value={form.password}
+          onChange={(e) => setForm({ ...form, password: e.target.value })} />
+        <Select label="الدور" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, serviceAreaId: "" })}>
+          <option value="citizen">{ar.roleCitizen}</option>
+          <option value="collector">{ar.roleCollector}</option>
+          <option value="authority">{ar.roleAuthority}</option>
+          <option value="sorter">{ar.roleSorter}</option>
+          <option value="finance">{ar.roleFinance}</option>
+          <option value="manager">{ar.roleManager}</option>
+        </Select>
+        {AREA_ROLES.has(form.role) ? (
+          <Select label={ar.serviceArea} required value={form.serviceAreaId}
+            onChange={(e) => setForm({ ...form, serviceAreaId: e.target.value })}>
+            <option value="">— اختر المنطقة —</option>
+            {(areas.data?.serviceAreas ?? []).map((a) => (
+              <option key={a.id} value={a.id}>{a.nameAr}</option>
+            ))}
+          </Select>
+        ) : null}
+        {error ? <div className="sm:col-span-2"><Alert kind="error">{error}</Alert></div> : null}
+        <div className="sm:col-span-2">
+          <Button type="submit" disabled={createMutation.isPending}>
+            {createMutation.isPending ? "…" : "إنشاء الحساب"}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function EditAccountRow({ account, onDone }: { account: AccountItem; onDone: () => void }): React.ReactNode {
+  const [form, setForm] = useState({
+    displayName: account.displayName, email: account.email, phone: account.phone ?? ""
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.PATCH("/admin/accounts/{id}", {
+        params: { path: { id: account.id } },
+        body: {
+          displayName: form.displayName,
+          email: form.email,
+          phone: form.phone || undefined
+        }
+      });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر التحديث");
+      return res.data;
+    },
+    onSuccess: onDone,
+    onError: (err) => setError(err.message)
+  });
+
+  return (
+    <tr className="bg-brand-50">
+      <Td colSpan={6}>
+        <form
+          className="grid gap-3 sm:grid-cols-4"
+          onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(); }}
+        >
+          <Input label={ar.displayName} required value={form.displayName}
+            onChange={(e) => setForm({ ...form, displayName: e.target.value })} />
+          <Input label="البريد الإلكتروني" type="email" dir="ltr" required value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <Input label={ar.phone} dir="ltr" value={form.phone}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          <div className="flex items-end gap-2">
+            <Button type="submit" disabled={updateMutation.isPending}>{updateMutation.isPending ? "…" : ar.save}</Button>
+            <Button type="button" variant="secondary" onClick={onDone}>{ar.cancel}</Button>
+          </div>
+          {error ? <div className="sm:col-span-4"><Alert kind="error">{error}</Alert></div> : null}
+        </form>
+      </Td>
+    </tr>
+  );
+}
+
 export function ManagerAccounts(): React.ReactNode {
   const [role, setRole] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["accounts", role],
@@ -123,6 +278,21 @@ export function ManagerAccounts(): React.ReactNode {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["accounts"] })
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await api.DELETE("/admin/accounts/{id}", { params: { path: { id: userId } } });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر الحذف");
+      return res.data;
+    },
+    onSuccess: () => {
+      setDeleteError(null);
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (err) => setDeleteError(err.message)
+  });
+
+  const refresh = () => void qc.invalidateQueries({ queryKey: ["accounts"] });
+
   if (list.isLoading) return <Loading />;
   if (list.isError || !list.data) return <ErrorState />;
 
@@ -135,26 +305,50 @@ export function ManagerAccounts(): React.ReactNode {
             {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </Select>
         } />
+      <CreateAccountForm onCreated={refresh} />
       {statusMutation.isError ? <div className="mb-4"><Alert kind="error">{(statusMutation.error as Error).message}</Alert></div> : null}
-      <Table head={["الاسم", "الدور", "البريد", ar.status, ar.date, ""]}>
-        {list.data.items.map((u) => (
-          <tr key={u.id}>
-            <Td className="font-semibold">{u.displayName}</Td>
-            <Td>{ROLE_LABELS[u.role] ?? u.role}</Td>
-            <Td dir="ltr" className="text-stone-500">{u.email}</Td>
-            <Td><StatusBadge code={u.status === "active" ? "active" : "void"} label={u.status === "active" ? "فعّال" : "معطّل"} /></Td>
-            <Td className="text-stone-500">{formatDateTime(u.createdAt)}</Td>
-            <Td>
-              <Button
-                variant={u.status === "active" ? "danger" : "secondary"}
-                onClick={() => statusMutation.mutate({ userId: u.id, status: u.status === "active" ? "disabled" : "active" })}
-              >
-                {u.status === "active" ? "تعطيل" : "تفعيل"}
-              </Button>
-            </Td>
-          </tr>
-        ))}
-      </Table>
+      {deleteError ? <div className="mb-4"><Alert kind="error">{deleteError}</Alert></div> : null}
+      {list.data.items.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <Table head={["الاسم", "الدور", "البريد", ar.status, ar.date, ""]}>
+          {list.data.items.map((u) =>
+            editingId === u.id ? (
+              <EditAccountRow key={u.id} account={u} onDone={() => { setEditingId(null); refresh(); }} />
+            ) : (
+              <tr key={u.id}>
+                <Td className="font-semibold">{u.displayName}</Td>
+                <Td>{ROLE_LABELS[u.role] ?? u.role}</Td>
+                <Td dir="ltr" className="text-stone-500">{u.email}</Td>
+                <Td><StatusBadge code={u.status === "active" ? "active" : "void"} label={u.status === "active" ? "فعّال" : "معطّل"} /></Td>
+                <Td className="text-stone-500">{formatDateTime(u.createdAt)}</Td>
+                <Td>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => setEditingId(u.id)}>تعديل</Button>
+                    <Button
+                      variant={u.status === "active" ? "danger" : "secondary"}
+                      onClick={() => statusMutation.mutate({ userId: u.id, status: u.status === "active" ? "disabled" : "active" })}
+                    >
+                      {u.status === "active" ? "تعطيل" : "تفعيل"}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm(`هل أنت متأكد من حذف حساب "${u.displayName}"؟ هذا الإجراء نهائي.`)) {
+                          deleteMutation.mutate(u.id);
+                        }
+                      }}
+                    >
+                      حذف
+                    </Button>
+                  </div>
+                </Td>
+              </tr>
+            )
+          )}
+        </Table>
+      )}
     </>
   );
 }
@@ -387,93 +581,51 @@ export function ManagerSettings(): React.ReactNode {
   );
 }
 
-interface VerifyResult {
-  aggregateId: string;
-  request: { id: string; requestNumber: number; combinedHash: string; status: string } | null;
-  valid: boolean;
-  eventsChecked: number;
-  firstBroken: unknown;
-  events: { seq: number; statusCode: string; actorRole: string | null; occurredAt: string; eventHash: string }[];
-}
-
 export function ManagerTraceability(): React.ReactNode {
-  const [reference, setReference] = useState("");
-  const [result, setResult] = useState<VerifyResult | null>(null);
+  const [aggregateId, setAggregateId] = useState("");
+  const [result, setResult] = useState<{ valid: boolean; eventsChecked: number; firstBroken: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const verify = useMutation({
     mutationFn: async () => {
       const res = await api.GET("/admin/traceability/verify/{aggregateType}/{aggregateId}", {
-        params: { path: { aggregateType: "request", aggregateId: reference.trim() } }
+        params: { path: { aggregateType: "request", aggregateId } }
       });
-      if (!res.response.ok) {
-        if (res.response.status === 404) throw new Error("لم يُعثر على طلب مطابق لهذا الكود");
-        if (res.response.status === 400) {
-          throw new Error("صيغة غير صالحة: أدخل كود CMP-… أو REQ-… أو رقم الطلب أو المعرف (UUID)");
-        }
-        const body = res.error as unknown as { detail?: string } | undefined;
-        throw new Error(body?.detail ?? "تعذر التحقق");
-      }
-      return res.data as unknown as VerifyResult;
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر التحقق");
+      return res.data as unknown as { valid: boolean; eventsChecked: number; firstBroken: unknown };
     },
     onSuccess: (data) => {
       setResult(data);
       setError(null);
     },
-    onError: (err) => {
-      setResult(null);
-      setError(err.message);
-    }
+    onError: (err) => setError(err.message)
   });
 
   return (
     <>
-      <PageHeader title={ar.verifyChain} subtitle="تحقق سلسلة الهاش لأي طلب بكود التتبع (CMP-…) أو رقم الطلب أو المعرف" />
+      <PageHeader title={ar.verifyChain} subtitle="تحقق سلسلة الهاش لأي طلب (SHA-256 canonical)" />
       <Card className="mb-4">
         <form className="flex flex-wrap gap-3" onSubmit={(e) => { e.preventDefault(); verify.mutate(); }}>
           <input
             className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm font-mono"
             dir="ltr"
-            placeholder="CMP-… | REQ-… | 1004 | UUID"
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
+            placeholder="معرف الطلب (UUID)"
+            value={aggregateId}
+            onChange={(e) => setAggregateId(e.target.value)}
           />
-          <Button type="submit" disabled={verify.isPending || reference.trim().length < 4}>
+          <Button type="submit" disabled={verify.isPending || aggregateId.length < 10}>
             {verify.isPending ? "…" : ar.verifyChain}
           </Button>
         </form>
       </Card>
       {error ? <Alert kind="error">{error}</Alert> : null}
       {result ? (
-        <div className="space-y-4">
-          <Card>
-            {result.valid ? (
-              <Alert kind="success">✅ {ar.chainValid} — {result.eventsChecked} حدثاً تم التحقق منها</Alert>
-            ) : (
-              <Alert kind="error">⚠️ {ar.chainInvalid} — تفاصيل: {JSON.stringify(result.firstBroken)}</Alert>
-            )}
-            {result.request ? (
-              <dl className="mt-4 space-y-2 text-sm">
-                <div className="flex justify-between"><dt className="text-stone-500">{ar.requestNumber}</dt><dd className="font-semibold">#{result.request.requestNumber}</dd></div>
-                <div className="flex justify-between"><dt className="text-stone-500">{ar.status}</dt><dd><StatusBadge code={result.request.status} label={ar.requestStatus[result.request.status] ?? result.request.status} /></dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-stone-500">كود التتبع</dt><dd className="break-all font-mono text-xs" dir="ltr">{result.request.combinedHash}</dd></div>
-                <div className="flex justify-between gap-3"><dt className="text-stone-500">المعرف</dt><dd className="break-all font-mono text-xs" dir="ltr">{result.aggregateId}</dd></div>
-              </dl>
-            ) : null}
-          </Card>
-          {result.events.length > 0 ? (
-            <Table head={["#", ar.status, "الدور", ar.date, "الهاش"]}>
-              {result.events.map((e) => (
-                <tr key={e.seq}>
-                  <Td className="font-semibold">{e.seq}</Td>
-                  <Td>{ar.requestStatus[e.statusCode] ?? e.statusCode}</Td>
-                  <Td>{e.actorRole ? (ROLE_LABELS[e.actorRole] ?? e.actorRole) : "—"}</Td>
-                  <Td className="text-stone-500">{formatDateTime(e.occurredAt)}</Td>
-                  <Td className="font-mono text-xs text-stone-400" dir="ltr">{shortHash(e.eventHash, 16)}</Td>
-                </tr>
-              ))}
-            </Table>
-          ) : null}
-        </div>
+        <Card>
+          {result.valid ? (
+            <Alert kind="success">✅ {ar.chainValid} — {result.eventsChecked} حدثاً تم التحقق منها</Alert>
+          ) : (
+            <Alert kind="error">⚠️ {ar.chainInvalid} — تفاصيل: {JSON.stringify(result.firstBroken)}</Alert>
+          )}
+        </Card>
       ) : null}
     </>
   );
