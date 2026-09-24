@@ -7,6 +7,7 @@ import { useState } from "react";
 import { api } from "../../shared/api/client.js";
 import { ar } from "../../shared/i18n/ar.js";
 import { Alert, Button, Input } from "../../shared/ui/components.js";
+import { LazyQrScanner } from "./lazy-qr-scanner.js";
 
 interface NextStepInfo {
   next: string | null;
@@ -29,16 +30,20 @@ export function TransitionAction({
   currentStatus,
   version,
   nextInfo,
-  role
+  role,
+  initialBarcode
 }: {
   requestId: string;
   currentStatus: string;
   version: number;
   nextInfo: NextStepInfo;
   role: "collector" | "authority" | "sorter" | "manager";
+  /** يُعبَّأ مسبقاً عند القدوم من شاشة المسح. */
+  initialBarcode?: string;
 }): React.ReactNode {
   const qc = useQueryClient();
-  const [barcode, setBarcode] = useState("");
+  const [barcode, setBarcode] = useState(initialBarcode ?? "");
+  const [scanning, setScanning] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -81,13 +86,28 @@ export function TransitionAction({
   return (
     <div className="space-y-3">
       {needsBarcode ? (
-        <Input
-          label={ar.scanBarcode}
-          dir="ltr"
-          placeholder="CMP-… أو WASTE-QR:v1:CMP-…"
-          value={barcode}
-          onChange={(e) => setBarcode(e.target.value)}
-        />
+        <>
+          <Input
+            label={ar.scanBarcode}
+            dir="ltr"
+            placeholder="CMP-… أو WASTE-QR:v1:CMP-…"
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+          />
+          {scanning ? (
+            <LazyQrScanner
+              onScan={(text) => {
+                setBarcode(text);
+                setScanning(false);
+              }}
+              onCancel={() => setScanning(false)}
+            />
+          ) : (
+            <Button variant="secondary" onClick={() => setScanning(true)}>
+              📷 مسح QR بالكاميرا
+            </Button>
+          )}
+        </>
       ) : null}
       {role === "manager" ? (
         <Input label={`سبب التجاوز (${ar.reason})`} value={reason} onChange={(e) => setReason(e.target.value)} />
