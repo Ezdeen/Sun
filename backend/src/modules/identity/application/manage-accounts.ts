@@ -8,6 +8,7 @@ import { DomainError } from "../../../shared/errors.js";
 import { uuidv7 } from "../../../shared/ids.js";
 import { isStrongPassword } from "../domain/password.js";
 import type { Role } from "../domain/permissions.js";
+import type { UserRow } from "../../../shared/db/schema.js";
 import {
   findUserByIdentifier,
   insertUser,
@@ -17,8 +18,7 @@ import {
   attachCitizenProfile,
   attachCollectorProfile,
   attachAuthorityProfile,
-  attachStaffProfile,
-  type UserRow
+  attachStaffProfile
 } from "../infrastructure/users-repo.js";
 import { recordAuthEvent } from "../infrastructure/sessions-repo.js";
 import type { IdentityDeps } from "./deps.js";

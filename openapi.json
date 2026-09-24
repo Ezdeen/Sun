@@ -483,6 +483,161 @@
             "description": "Default Response"
           }
         }
+      },
+      "post": {
+        "summary": "Manager: create an account directly (any role), no invitation needed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "displayName",
+                  "email",
+                  "password",
+                  "role"
+                ],
+                "properties": {
+                  "displayName": {
+                    "minLength": 2,
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "email": {
+                    "format": "email",
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "phone": {
+                    "minLength": 9,
+                    "maxLength": 15,
+                    "type": "string"
+                  },
+                  "password": {
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "role": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "citizen"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "collector"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "authority"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "sorter"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "finance"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "manager"
+                        ]
+                      }
+                    ]
+                  },
+                  "serviceAreaId": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/admin/accounts/{id}": {
+      "patch": {
+        "summary": "Manager: edit an existing account's display name / email / phone.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": {
+                    "minLength": 2,
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "email": {
+                    "format": "email",
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "phone": {
+                    "minLength": 9,
+                    "maxLength": 15,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Manager: permanently delete an account (blocked if it has business history).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
       }
     },
     "/admin/accounts/{id}/status": {
@@ -1254,33 +1409,6 @@
       }
     },
     "/shipments": {
-      "post": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "buyerName": {
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "notes": {
-                    "maxLength": 500,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
       "get": {
         "parameters": [
           {
@@ -1331,6 +1459,33 @@
             "required": false
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "buyerName": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "notes": {
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"
@@ -1454,6 +1609,44 @@
       }
     },
     "/invoices": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "page",
+            "required": false
+          },
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "pageSize",
+            "required": false
+          },
+          {
+            "schema": {
+              "maxLength": 16,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
       "post": {
         "requestBody": {
           "required": true,
@@ -1492,44 +1685,6 @@
             },
             "in": "header",
             "name": "idempotency-key",
-            "required": false
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 10000,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "page",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 100,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "pageSize",
-            "required": false
-          },
-          {
-            "schema": {
-              "maxLength": 16,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "status",
             "required": false
           }
         ],
