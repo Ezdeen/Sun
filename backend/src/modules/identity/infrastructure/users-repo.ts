@@ -67,6 +67,40 @@ export async function updateUserStatus(
   return row;
 }
 
+/**
+ * Edit a user's basic profile fields (manager account management).
+ * Does NOT touch role, status, or identity hash — those go through their
+ * own dedicated flows.
+ */
+export async function updateUserProfile(
+  db: DbOrTx,
+  userId: string,
+  patch: { displayName?: string; email?: string; phone?: string | null }
+): Promise<UserRow | undefined> {
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (patch.displayName !== undefined) set["displayName"] = patch.displayName;
+  if (patch.email !== undefined) set["email"] = patch.email.trim().toLowerCase();
+  if (patch.phone !== undefined) set["phone"] = patch.phone;
+  const [row] = await db
+    .update(users)
+    .set(set as never)
+    .where(eq(users.id, userId))
+    .returning();
+  return row;
+}
+
+/**
+ * Hard-delete a user account (manager account management). Role profile
+ * tables (citizens/collectors/authorities/staff_profiles/credentials) cascade
+ * automatically; tables that hold business history (requests, shipments,
+ * invoices…) restrict the delete — callers should catch the FK violation
+ * and offer disabling the account instead.
+ */
+export async function deleteUserById(db: DbOrTx, userId: string): Promise<boolean> {
+  const res = await db.delete(users).where(eq(users.id, userId)).returning({ id: users.id });
+  return res.length > 0;
+}
+
 export async function listUsers(
   db: DbOrTx,
   filter: { role?: Role; page: number; pageSize: number }
