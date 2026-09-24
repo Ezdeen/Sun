@@ -20,6 +20,8 @@
     "@fontsource/cairo": "^5.2.5",
     "@hookform/resolvers": "^3.10.0",
     "@tanstack/react-query": "^5.90.2",
+    "html5-qrcode": "^2.3.8",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.9.1",
