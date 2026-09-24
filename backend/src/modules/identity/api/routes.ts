@@ -16,6 +16,11 @@ import {
   revokeInvitationById
 } from "../application/invitations.js";
 import { acceptInvitationAndCreateUser } from "../application/accept-invitation.js";
+import {
+  createAccountByManager,
+  updateAccountByManager,
+  deleteAccountByManager
+} from "../application/manage-accounts.js";
 import { listUsers, updateUserStatus } from "../infrastructure/users-repo.js";
 import { listAuthEvents, recordAuthEvent } from "../infrastructure/sessions-repo.js";
 import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH, type IdentityDeps } from "../application/deps.js";
@@ -70,6 +75,30 @@ const AcceptInvitationBody = Type.Object({
   token: Type.String({ minLength: 20, maxLength: 128 }),
   password: Type.String({ minLength: 8, maxLength: 128 }),
   displayName: Type.String({ minLength: 2, maxLength: 80 }),
+  phone: Type.Optional(Type.String({ minLength: 9, maxLength: 15 }))
+});
+
+/** Manager creates ANY account directly — no invitation round-trip. */
+const CreateAccountBody = Type.Object({
+  displayName: Type.String({ minLength: 2, maxLength: 80 }),
+  email: Type.String({ format: "email", maxLength: 120 }),
+  phone: Type.Optional(Type.String({ minLength: 9, maxLength: 15 })),
+  password: Type.String({ minLength: 8, maxLength: 128 }),
+  role: Type.Union([
+    Type.Literal("citizen"),
+    Type.Literal("collector"),
+    Type.Literal("authority"),
+    Type.Literal("sorter"),
+    Type.Literal("finance"),
+    Type.Literal("manager")
+  ]),
+  serviceAreaId: Type.Optional(Type.String({ format: "uuid" }))
+});
+
+/** Manager edits an existing account's basic profile fields. */
+const UpdateAccountBody = Type.Object({
+  displayName: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
+  email: Type.Optional(Type.String({ format: "email", maxLength: 120 })),
   phone: Type.Optional(Type.String({ minLength: 9, maxLength: 15 }))
 });
 
@@ -244,6 +273,7 @@ export function registerIdentityRoutes(
           role: u.role,
           displayName: u.displayName,
           email: u.email,
+          phone: u.phone,
           status: u.status,
           createdAt: u.createdAt
         })),
@@ -251,6 +281,56 @@ export function registerIdentityRoutes(
         pageSize: p.pageSize,
         total: result.total
       };
+    }
+  );
+
+  /** Manager: create an account directly (any role), no invitation needed. */
+  app.post(
+    "/admin/accounts",
+    { preHandler: guards.requirePermission("account:manage"), schema: { body: CreateAccountBody } },
+    async (req, reply) => {
+      const b = req.body as Static<typeof CreateAccountBody>;
+      const result = await createAccountByManager(deps, {
+        displayName: b.displayName,
+        email: b.email,
+        phone: b.phone ?? null,
+        password: b.password,
+        role: b.role,
+        serviceAreaId: b.serviceAreaId ?? null,
+        createdBy: req.authUser!.id
+      });
+      void reply.status(201);
+      return result;
+    }
+  );
+
+  /** Manager: edit an existing account's display name / email / phone. */
+  app.patch(
+    "/admin/accounts/:id",
+    { preHandler: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as Static<typeof UpdateAccountBody>;
+      const updated = await updateAccountByManager(deps, id, b, req.authUser!.id);
+      return {
+        id: updated.id,
+        role: updated.role,
+        displayName: updated.displayName,
+        email: updated.email,
+        phone: updated.phone,
+        status: updated.status
+      };
+    }
+  );
+
+  /** Manager: permanently delete an account (blocked if it has business history). */
+  app.delete(
+    "/admin/accounts/:id",
+    { preHandler: guards.requirePermission("account:manage") },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      await deleteAccountByManager(deps, id, req.authUser!.id);
+      return { ok: true };
     }
   );
 
