@@ -11,6 +11,7 @@ import {
   Alert, Button, Card, EmptyState, ErrorState, Input, Loading, PageHeader, Select,
   StatCard, StatusBadge, Table, Td
 } from "../../shared/ui/components.js";
+import { QrCode } from "../../shared/ui/qr-code.js";
 import { formatDateTime, formatMoney, formatWeight, shortHash } from "../../shared/lib/format.js";
 
 interface DashboardData {
@@ -159,7 +160,7 @@ export function NewCitizenRequest(): React.ReactNode {
   const [notes, setNotes] = useState("");
   const [estimate, setEstimate] = useState<EstimateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ requestNumber: number; combinedHash: string } | null>(null);
+  const [created, setCreated] = useState<{ requestNumber: number; combinedHash: string; qrPayload: string } | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
@@ -205,10 +206,14 @@ export function NewCitizenRequest(): React.ReactNode {
         }
       });
       if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر إنشاء الطلب");
-      return res.data as unknown as { request: { requestNumber: number; combinedHash: string } };
+      return res.data as unknown as { request: { requestNumber: number; combinedHash: string; qrPayload: string } };
     },
     onSuccess: (data) => {
-      setCreated({ requestNumber: data.request.requestNumber, combinedHash: data.request.combinedHash });
+      setCreated({
+        requestNumber: data.request.requestNumber,
+        combinedHash: data.request.combinedHash,
+        qrPayload: data.request.qrPayload
+      });
       void qc.invalidateQueries({ queryKey: ["my-requests"] });
       void qc.invalidateQueries({ queryKey: ["citizen-dashboard"] });
     },
@@ -220,13 +225,19 @@ export function NewCitizenRequest(): React.ReactNode {
 
   if (created) {
     return (
-      <Card className="mx-auto max-w-lg text-center">
+      <Card className="mx-auto max-w-2xl text-center">
         <div className="text-4xl">✅</div>
         <h1 className="mt-3 text-xl font-bold">تم إنشاء الطلب #{created.requestNumber}</h1>
-        <p className="mt-2 text-sm text-stone-500">
-          احتفظ بكود التتبع الخاص بك: <span className="font-mono text-xs">{created.combinedHash}</span>
-        </p>
-        <div className="mt-4 flex justify-center gap-3">
+
+        <div className="mt-5 flex flex-col items-center justify-center gap-5 sm:flex-row">
+          <QrCode value={created.qrPayload} label="أظهر هذا الرمز للجامع عند الاستلام" />
+          <div className="text-start">
+            <p className="text-sm text-stone-500">احتفظ بكود التتبع الخاص بك:</p>
+            <p className="mt-1 break-all font-mono text-xs" dir="ltr">{created.combinedHash}</p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-center gap-3">
           <Link to="/citizen/requests"><Button>{ar.yourRequests}</Button></Link>
           <Link to={`/citizen/track/${encodeURIComponent(created.combinedHash)}`}>
             <Button variant="secondary">{ar.trackYourRequest}</Button>
@@ -400,6 +411,11 @@ export function CitizenRequestDetail(): React.ReactNode {
             <div className="flex justify-between"><dt className="text-stone-500">كود التتبع</dt><dd className="font-mono text-xs">{d.request.combinedHash}</dd></div>
             {d.request.notes ? <div className="flex justify-between"><dt className="text-stone-500">{ar.notes}</dt><dd>{d.request.notes}</dd></div> : null}
           </dl>
+          {["received", "sent_to_collector", "on_the_way", "arrived"].includes(d.request.status) ? (
+            <div className="mt-4 flex justify-center">
+              <QrCode value={d.request.qrPayload} label="أظهر هذا الرمز للجامع عند الاستلام" />
+            </div>
+          ) : null}
           <h3 className="mt-4 mb-2 font-bold">{ar.estimate}</h3>
           <ul className="space-y-1 text-sm">
             {d.items.map((it) => (
