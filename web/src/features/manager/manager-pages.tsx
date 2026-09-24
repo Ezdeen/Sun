@@ -10,7 +10,7 @@ import {
   Alert, Button, Card, EmptyState, ErrorState, Input, Loading, PageHeader, Select,
   StatCard, StatusBadge, Table, Td
 } from "../../shared/ui/components.js";
-import { formatDateTime, formatMoney } from "../../shared/lib/format.js";
+import { formatDateTime, formatMoney, shortHash } from "../../shared/lib/format.js";
 
 interface ManagerDashboardData {
   requestStatusCounts: Record<string, number>;
@@ -387,51 +387,93 @@ export function ManagerSettings(): React.ReactNode {
   );
 }
 
+interface VerifyResult {
+  aggregateId: string;
+  request: { id: string; requestNumber: number; combinedHash: string; status: string } | null;
+  valid: boolean;
+  eventsChecked: number;
+  firstBroken: unknown;
+  events: { seq: number; statusCode: string; actorRole: string | null; occurredAt: string; eventHash: string }[];
+}
+
 export function ManagerTraceability(): React.ReactNode {
-  const [aggregateId, setAggregateId] = useState("");
-  const [result, setResult] = useState<{ valid: boolean; eventsChecked: number; firstBroken: unknown } | null>(null);
+  const [reference, setReference] = useState("");
+  const [result, setResult] = useState<VerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const verify = useMutation({
     mutationFn: async () => {
       const res = await api.GET("/admin/traceability/verify/{aggregateType}/{aggregateId}", {
-        params: { path: { aggregateType: "request", aggregateId } }
+        params: { path: { aggregateType: "request", aggregateId: reference.trim() } }
       });
-      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر التحقق");
-      return res.data as unknown as { valid: boolean; eventsChecked: number; firstBroken: unknown };
+      if (!res.response.ok) {
+        if (res.response.status === 404) throw new Error("لم يُعثر على طلب مطابق لهذا الكود");
+        if (res.response.status === 400) {
+          throw new Error("صيغة غير صالحة: أدخل كود CMP-… أو REQ-… أو رقم الطلب أو المعرف (UUID)");
+        }
+        const body = res.error as unknown as { detail?: string } | undefined;
+        throw new Error(body?.detail ?? "تعذر التحقق");
+      }
+      return res.data as unknown as VerifyResult;
     },
     onSuccess: (data) => {
       setResult(data);
       setError(null);
     },
-    onError: (err) => setError(err.message)
+    onError: (err) => {
+      setResult(null);
+      setError(err.message);
+    }
   });
 
   return (
     <>
-      <PageHeader title={ar.verifyChain} subtitle="تحقق سلسلة الهاش لأي طلب (SHA-256 canonical)" />
+      <PageHeader title={ar.verifyChain} subtitle="تحقق سلسلة الهاش لأي طلب بكود التتبع (CMP-…) أو رقم الطلب أو المعرف" />
       <Card className="mb-4">
         <form className="flex flex-wrap gap-3" onSubmit={(e) => { e.preventDefault(); verify.mutate(); }}>
           <input
             className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm font-mono"
             dir="ltr"
-            placeholder="معرف الطلب (UUID)"
-            value={aggregateId}
-            onChange={(e) => setAggregateId(e.target.value)}
+            placeholder="CMP-… | REQ-… | 1004 | UUID"
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
           />
-          <Button type="submit" disabled={verify.isPending || aggregateId.length < 10}>
+          <Button type="submit" disabled={verify.isPending || reference.trim().length < 4}>
             {verify.isPending ? "…" : ar.verifyChain}
           </Button>
         </form>
       </Card>
       {error ? <Alert kind="error">{error}</Alert> : null}
       {result ? (
-        <Card>
-          {result.valid ? (
-            <Alert kind="success">✅ {ar.chainValid} — {result.eventsChecked} حدثاً تم التحقق منها</Alert>
-          ) : (
-            <Alert kind="error">⚠️ {ar.chainInvalid} — تفاصيل: {JSON.stringify(result.firstBroken)}</Alert>
-          )}
-        </Card>
+        <div className="space-y-4">
+          <Card>
+            {result.valid ? (
+              <Alert kind="success">✅ {ar.chainValid} — {result.eventsChecked} حدثاً تم التحقق منها</Alert>
+            ) : (
+              <Alert kind="error">⚠️ {ar.chainInvalid} — تفاصيل: {JSON.stringify(result.firstBroken)}</Alert>
+            )}
+            {result.request ? (
+              <dl className="mt-4 space-y-2 text-sm">
+                <div className="flex justify-between"><dt className="text-stone-500">{ar.requestNumber}</dt><dd className="font-semibold">#{result.request.requestNumber}</dd></div>
+                <div className="flex justify-between"><dt className="text-stone-500">{ar.status}</dt><dd><StatusBadge code={result.request.status} label={ar.requestStatus[result.request.status] ?? result.request.status} /></dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-stone-500">كود التتبع</dt><dd className="break-all font-mono text-xs" dir="ltr">{result.request.combinedHash}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-stone-500">المعرف</dt><dd className="break-all font-mono text-xs" dir="ltr">{result.aggregateId}</dd></div>
+              </dl>
+            ) : null}
+          </Card>
+          {result.events.length > 0 ? (
+            <Table head={["#", ar.status, "الدور", ar.date, "الهاش"]}>
+              {result.events.map((e) => (
+                <tr key={e.seq}>
+                  <Td className="font-semibold">{e.seq}</Td>
+                  <Td>{ar.requestStatus[e.statusCode] ?? e.statusCode}</Td>
+                  <Td>{e.actorRole ? (ROLE_LABELS[e.actorRole] ?? e.actorRole) : "—"}</Td>
+                  <Td className="text-stone-500">{formatDateTime(e.occurredAt)}</Td>
+                  <Td className="font-mono text-xs text-stone-400" dir="ltr">{shortHash(e.eventHash, 16)}</Td>
+                </tr>
+              ))}
+            </Table>
+          ) : null}
+        </div>
       ) : null}
     </>
   );
