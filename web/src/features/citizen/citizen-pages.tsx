@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
+import "./citizen-theme.css";
 import { api } from "../../shared/api/client.js";
 import { ar } from "../../shared/i18n/ar.js";
 import {
@@ -33,16 +34,16 @@ export function CitizenDashboard(): React.ReactNode {
   const d = dash.data;
 
   return (
-    <>
+    <div className="eco-citizen">
       <PageHeader title={ar.welcomeCitizen} subtitle={ar.dashboard} />
-      <div className="mb-6 flex flex-wrap gap-4">
+      <div className="eco-stats mb-6 flex flex-wrap gap-4">
         <StatCard label={ar.yourRequests} value={d.totalRequests} />
         <StatCard label={ar.totalEarned} value={formatMoney(d.totalEarned)} />
         <StatCard label={ar.lastRequest} value={d.lastRequest ? `#${d.lastRequest.requestNumber}` : "—"}
           hint={d.lastRequest ? ar.requestStatus[d.lastRequest.status] : undefined} />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="eco-card">
           <h2 className="mb-3 font-bold">{ar.requests}</h2>
           {Object.keys(d.statusCounts).length === 0 ? (
             <EmptyState label="لم تنشئ أي طلب بعد" />
@@ -57,7 +58,7 @@ export function CitizenDashboard(): React.ReactNode {
             </ul>
           )}
         </Card>
-        <Card>
+        <Card className="eco-card">
           <h2 className="mb-3 font-bold">{ar.myPayouts}</h2>
           {d.lastPayout ? (
             <div className="space-y-2 text-sm">
@@ -75,17 +76,17 @@ export function CitizenDashboard(): React.ReactNode {
           )}
         </Card>
       </div>
-      <div className="mt-6 flex gap-3">
+      <div className="eco-actions mt-6 flex gap-3">
         <Link to="/citizen/requests/new">
-          <Button>＋ {ar.newRequest}</Button>
+          <Button className="eco-button">＋ {ar.newRequest}</Button>
         </Link>
         {d.lastRequest ? (
           <Link to={`/citizen/track/${encodeURIComponent(d.lastRequest.combinedHash)}`}>
-            <Button variant="secondary">{ar.trackYourRequest}</Button>
+            <Button variant="secondary" className="eco-button eco-secondary">{ar.trackYourRequest}</Button>
           </Link>
         ) : null}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -106,15 +107,15 @@ export function CitizenRequests(): React.ReactNode {
   if (list.isError || !list.data) return <ErrorState />;
   if (list.data.items.length === 0) {
     return (
-      <>
+      <div className="eco-citizen">
         <PageHeader title={ar.yourRequests} />
         <EmptyState label="لم تنشئ أي طلب بعد" />
-      </>
+      </div>
     );
   }
   return (
-    <>
-      <PageHeader title={ar.yourRequests} actions={<Link to="/citizen/requests/new"><Button>＋ {ar.newRequest}</Button></Link>} />
+    <div className="eco-citizen">
+      <PageHeader title={ar.yourRequests} actions={<Link to="/citizen/requests/new"><Button className="eco-button">＋ {ar.newRequest}</Button></Link>} />
       <Table head={[ar.requestNumber, ar.status, ar.date, "التتبع", ""]}>
         {list.data.items.map((r) => (
           <tr key={r.id} className="hover:bg-stone-50">
@@ -126,7 +127,7 @@ export function CitizenRequests(): React.ReactNode {
           </tr>
         ))}
       </Table>
-    </>
+    </div>
   );
 }
 
@@ -225,7 +226,7 @@ export function NewCitizenRequest(): React.ReactNode {
 
   if (created) {
     return (
-      <Card className="mx-auto max-w-2xl text-center">
+      <Card className="eco-citizen eco-success mx-auto max-w-2xl text-center">
         <div className="text-4xl">✅</div>
         <h1 className="mt-3 text-xl font-bold">تم إنشاء الطلب #{created.requestNumber}</h1>
 
@@ -237,10 +238,10 @@ export function NewCitizenRequest(): React.ReactNode {
           </div>
         </div>
 
-        <div className="mt-6 flex justify-center gap-3">
-          <Link to="/citizen/requests"><Button>{ar.yourRequests}</Button></Link>
+        <div className="eco-actions mt-6 flex justify-center gap-3">
+          <Link to="/citizen/requests"><Button className="eco-button">{ar.yourRequests}</Button></Link>
           <Link to={`/citizen/track/${encodeURIComponent(created.combinedHash)}`}>
-            <Button variant="secondary">{ar.trackYourRequest}</Button>
+            <Button variant="secondary" className="eco-button eco-secondary">{ar.trackYourRequest}</Button>
           </Link>
         </div>
       </Card>
@@ -254,7 +255,7 @@ export function NewCitizenRequest(): React.ReactNode {
   };
 
   return (
-    <>
+    <div className="eco-citizen">
       <PageHeader title={ar.newRequest} subtitle="اختر الأنواع والكميات ثم احصل على تقدير فوري" />
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -262,7 +263,7 @@ export function NewCitizenRequest(): React.ReactNode {
             const type = types.find((t) => t.code === line.wasteTypeCode);
             const addonsForType = catalog.data!.addons.filter((a) => a.appliesTo.includes(line.wasteTypeCode));
             return (
-              <Card key={idx}>
+              <Card key={idx} className="eco-card">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Select
                     label={ar.wasteTypes}
@@ -292,7 +293,14 @@ export function NewCitizenRequest(): React.ReactNode {
                       {addonsForType.map((a) => {
                         const checked = line.selectedAddons.includes(a.code);
                         return (
-                          <label key={a.code} className={`cursor-pointer rounded-lg border px-3 py-1.5 text-sm ${checked ? "border-brand-500 bg-brand-50 text-brand-800" : "border-stone-300"}`}>
+                          <label
+                            key={a.code}
+                            className={`eco-addon cursor-pointer rounded-lg border px-3 py-1.5 text-sm ${
+                              checked
+                                ? "border-brand-500 bg-brand-50 text-brand-800"
+                                : "border-stone-300"
+                            }`}
+                          >
                             <input
                               type="checkbox"
                               className="me-1"
@@ -314,7 +322,7 @@ export function NewCitizenRequest(): React.ReactNode {
                 ) : null}
                 {lines.length > 1 ? (
                   <button
-                    className="mt-3 text-sm text-red-600 hover:underline"
+                    className="eco-remove mt-3 text-sm text-red-600 hover:underline"
                     onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
                   >
                     ✕ {ar.remove}
@@ -323,16 +331,16 @@ export function NewCitizenRequest(): React.ReactNode {
               </Card>
             );
           })}
-          <Button variant="secondary" onClick={() => setLines((prev) => [...prev, { wasteTypeCode: types[0]?.code ?? "", quantity: "1", weightKg: "", selectedAddons: [] }])}>
+          <Button variant="secondary" className="eco-button eco-secondary" onClick={() => setLines((prev) => [...prev, { wasteTypeCode: types[0]?.code ?? "", quantity: "1", weightKg: "", selectedAddons: [] }])}>
             ＋ {ar.add}
           </Button>
           <Input label={ar.notes} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
 
         <div className="space-y-4">
-          <Card>
+          <Card className="eco-card">
             <h2 className="mb-3 font-bold">{ar.estimate}</h2>
-            <Button className="w-full" onClick={() => estimateMutation.mutate()} disabled={estimateMutation.isPending}>
+            <Button className="eco-button w-full" onClick={() => estimateMutation.mutate()} disabled={estimateMutation.isPending}>
               {estimateMutation.isPending ? "…" : "احسب التقدير"}
             </Button>
             {estimate ? (
@@ -364,7 +372,7 @@ export function NewCitizenRequest(): React.ReactNode {
           </Card>
           {error ? <Alert kind="error">{error}</Alert> : null}
           <Button
-            className="w-full"
+            className="eco-button w-full"
             disabled={createMutation.isPending}
             onClick={() => createMutation.mutate()}
           >
@@ -372,7 +380,7 @@ export function NewCitizenRequest(): React.ReactNode {
           </Button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -397,11 +405,11 @@ export function CitizenRequestDetail(): React.ReactNode {
   const d = detail.data;
 
   return (
-    <>
+    <div className="eco-citizen">
       <PageHeader title={`الطلب #${d.request.requestNumber}`}
-        actions={<Link to="/citizen/requests"><Button variant="secondary">{ar.back}</Button></Link>} />
+        actions={<Link to="/citizen/requests"><Button variant="secondary" className="eco-button eco-secondary">{ar.back}</Button></Link>} />
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+        <Card className="eco-card">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-stone-500">{ar.status}</span>
             <StatusBadge code={d.request.status} label={ar.requestStatus[d.request.status] ?? d.request.status} />
@@ -426,9 +434,9 @@ export function CitizenRequestDetail(): React.ReactNode {
             ))}
           </ul>
         </Card>
-        <Card>
+        <Card className="eco-card">
           <h2 className="mb-3 font-bold">{ar.timeline}</h2>
-          <ol className="relative space-y-4 border-s-2 border-stone-200 ps-4">
+          <ol className="eco-timeline relative space-y-4 border-s-2 border-stone-200 ps-4">
             {d.chain.events.map((e) => (
               <li key={e.seq} className="relative">
                 <span className="absolute -start-[21px] top-1 h-3 w-3 rounded-full bg-brand-600" />
@@ -456,7 +464,7 @@ export function CitizenRequestDetail(): React.ReactNode {
           </Table>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -471,12 +479,19 @@ export function CitizenPayouts(): React.ReactNode {
   });
   if (payouts.isLoading) return <Loading />;
   if (payouts.isError || !payouts.data) return <ErrorState />;
-  if (payouts.data.items.length === 0) return <><PageHeader title={ar.myPayouts} /><EmptyState label="لا مستحقات بعد" /></>;
+  if (payouts.data.items.length === 0) {
+    return (
+      <div className="eco-citizen">
+        <PageHeader title={ar.myPayouts} />
+        <EmptyState label="لا مستحقات بعد" />
+      </div>
+    );
+  }
   const total = payouts.data.items
     .filter((p) => p.status !== "void")
     .reduce((acc, p) => acc + Number.parseFloat(p.amount), 0);
   return (
-    <>
+    <div className="eco-citizen">
       <PageHeader title={ar.myPayouts} subtitle={`${ar.total}: ${total.toFixed(2)} ₪`} />
       <Table head={[ar.invoiceNumber, ar.amount, ar.weight, ar.status, "تاريخ الحساب", "تاريخ الدفع"]}>
         {payouts.data.items.map((p) => (
@@ -490,7 +505,7 @@ export function CitizenPayouts(): React.ReactNode {
           </tr>
         ))}
       </Table>
-    </>
+    </div>
   );
 }
 
@@ -512,9 +527,9 @@ export function CitizenTrack(): React.ReactNode {
   });
 
   return (
-    <>
+    <div className="eco-citizen">
       <PageHeader title={ar.tracking} subtitle="أدخل كود التتبع (CMP-…) الخاص بطلبك" />
-      <Card className="mb-6">
+      <Card className="eco-card mb-6">
         <form
           className="flex flex-wrap gap-3"
           onSubmit={(e) => {
@@ -523,24 +538,24 @@ export function CitizenTrack(): React.ReactNode {
           }}
         >
           <input
-            className="flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm font-mono"
+            className="eco-track-input flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm font-mono"
             dir="ltr"
             placeholder="CMP-…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <Button type="submit">{ar.tracking}</Button>
+          <Button type="submit" className="eco-button">{ar.tracking}</Button>
         </form>
       </Card>
       {track.isLoading ? <Loading /> : null}
       {track.isError ? <ErrorState message="كود التتبع غير صحيح أو غير موجود" /> : null}
       {track.data ? (
-        <Card>
+        <Card className="eco-card">
           <div className="mb-4 flex items-center justify-between">
             <span className="text-stone-500">الحالة الحالية</span>
             <StatusBadge code="collected" label={track.data.currentStatusLabel} />
           </div>
-          <ol className="relative space-y-4 border-s-2 border-stone-200 ps-4">
+          <ol className="eco-timeline relative space-y-4 border-s-2 border-stone-200 ps-4">
             {track.data.timeline.map((e, i) => (
               <li key={i} className="relative">
                 <span className="absolute -start-[21px] top-1 h-3 w-3 rounded-full bg-brand-600" />
@@ -553,6 +568,6 @@ export function CitizenTrack(): React.ReactNode {
           </ol>
         </Card>
       ) : null}
-    </>
+    </div>
   );
 }
