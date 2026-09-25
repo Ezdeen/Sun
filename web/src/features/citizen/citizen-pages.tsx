@@ -544,7 +544,7 @@ export function CitizenTrack(): React.ReactNode {
             {track.data.timeline.map((e, i) => (
               <li key={i} className="relative">
                 <span className="absolute -start-[21px] top-1 h-3 w-3 rounded-full bg-brand-600" />
-                <div className="text-sm font-semibold">{e.statusLabel}</div>
+                <div className="text-sm font-semibold">{i === 0 ? "تم استلام الطلب" : e.statusLabel}</div>
                 <div className="text-xs text-stone-400">
                   {formatDateTime(e.occurredAt)} {e.actorRoleLabel ? `· ${e.actorRoleLabel}` : ""}
                 </div>
