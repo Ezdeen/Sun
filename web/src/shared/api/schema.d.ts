@@ -524,7 +524,7 @@ export interface paths {
             };
             responses: {
                 /** @description Default Response */
-                200: {
+                201: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -588,6 +588,7 @@ export interface paths {
                         /** Format: email */
                         email?: string;
                         phone?: string;
+                        password?: string;
                     };
                 };
             };

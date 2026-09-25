@@ -599,6 +599,11 @@
                     "minLength": 9,
                     "maxLength": 15,
                     "type": "string"
+                  },
+                  "password": {
+                    "minLength": 8,
+                    "maxLength": 128,
+                    "type": "string"
                   }
                 }
               }

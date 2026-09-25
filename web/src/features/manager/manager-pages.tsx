@@ -210,7 +210,7 @@ function CreateAccountForm({ onCreated }: { onCreated: () => void }): React.Reac
 
 function EditAccountRow({ account, onDone }: { account: AccountItem; onDone: () => void }): React.ReactNode {
   const [form, setForm] = useState({
-    displayName: account.displayName, email: account.email, phone: account.phone ?? ""
+    displayName: account.displayName, email: account.email, phone: account.phone ?? "", password: ""
   });
   const [error, setError] = useState<string | null>(null);
 
@@ -221,7 +221,8 @@ function EditAccountRow({ account, onDone }: { account: AccountItem; onDone: () 
         body: {
           displayName: form.displayName,
           email: form.email,
-          phone: form.phone || undefined
+          phone: form.phone || undefined,
+          ...(form.password ? { password: form.password } : {})
         }
       });
       if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر التحديث");
@@ -244,7 +245,10 @@ function EditAccountRow({ account, onDone }: { account: AccountItem; onDone: () 
             onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <Input label={ar.phone} dir="ltr" value={form.phone}
             onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <div className="flex items-end gap-2">
+          <Input label={`${ar.password} (اختياري)`} type="password" dir="ltr" minLength={8}
+            placeholder="اتركها فارغة لعدم التغيير" value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <div className="flex items-end gap-2 sm:col-span-4">
             <Button type="submit" disabled={updateMutation.isPending}>{updateMutation.isPending ? "…" : ar.save}</Button>
             <Button type="button" variant="secondary" onClick={onDone}>{ar.cancel}</Button>
           </div>

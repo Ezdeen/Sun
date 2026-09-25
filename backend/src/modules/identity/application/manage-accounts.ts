@@ -11,6 +11,7 @@ import type { Role } from "../domain/permissions.js";
 import type { UserRow } from "../../../shared/db/schema.js";
 import {
   findUserByIdentifier,
+  findUserById,
   insertUser,
   upsertCredential,
   updateUserProfile,
@@ -113,6 +114,7 @@ export interface UpdateAccountInput {
   displayName?: string;
   email?: string;
   phone?: string | null;
+  password?: string;
 }
 
 export async function updateAccountByManager(
@@ -123,7 +125,12 @@ export async function updateAccountByManager(
 ): Promise<UserRow> {
   const { db } = deps;
 
-  if (patch.displayName === undefined && patch.email === undefined && patch.phone === undefined) {
+  if (
+    patch.displayName === undefined &&
+    patch.email === undefined &&
+    patch.phone === undefined &&
+    patch.password === undefined
+  ) {
     throw new DomainError("validation_error", "no fields to update", 400);
   }
 
@@ -135,14 +142,44 @@ export async function updateAccountByManager(
     }
   }
 
-  const updated = await updateUserProfile(db, userId, patch);
-  if (!updated) throw new DomainError("not_found", "user not found", 404);
+  if (patch.password !== undefined) {
+    if (!isStrongPassword(patch.password)) {
+      throw new DomainError("weak_password", "password does not meet policy", 400);
+    }
+  }
+
+  const { password, ...profilePatch } = patch;
+  const hasProfileChange =
+    profilePatch.displayName !== undefined || profilePatch.email !== undefined || profilePatch.phone !== undefined;
+
+  let updated: UserRow | undefined;
+  if (hasProfileChange) {
+    updated = await updateUserProfile(db, userId, profilePatch);
+    if (!updated) throw new DomainError("not_found", "user not found", 404);
+  } else {
+    const existing = await findUserById(db, userId);
+    if (!existing) throw new DomainError("not_found", "user not found", 404);
+    updated = existing;
+  }
+
+  if (password !== undefined) {
+    const passwordHash = await hash(password, {
+      memoryCost: 65536,
+      timeCost: 3,
+      parallelism: 2
+    });
+    await upsertCredential(db, { userId, passwordHash });
+  }
 
   await recordAuthEvent(db, {
     id: uuidv7(),
     userId: actorId,
-    eventType: "account_status_changed",
-    details: { action: "account_updated", targetUserId: userId, patch }
+    eventType: password !== undefined ? "password_changed" : "account_status_changed",
+    details: {
+      action: "account_updated",
+      targetUserId: userId,
+      patch: { ...profilePatch, password: password !== undefined ? "[redacted]" : undefined }
+    }
   });
 
   return updated;

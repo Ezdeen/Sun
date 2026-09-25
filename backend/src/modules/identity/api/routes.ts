@@ -99,7 +99,8 @@ const CreateAccountBody = Type.Object({
 const UpdateAccountBody = Type.Object({
   displayName: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
   email: Type.Optional(Type.String({ format: "email", maxLength: 120 })),
-  phone: Type.Optional(Type.String({ minLength: 9, maxLength: 15 }))
+  phone: Type.Optional(Type.String({ minLength: 9, maxLength: 15 })),
+  password: Type.Optional(Type.String({ minLength: 8, maxLength: 128 }))
 });
 
 type LoginBodyT = Static<typeof LoginBody>;
@@ -304,14 +305,19 @@ export function registerIdentityRoutes(
     }
   );
 
-  /** Manager: edit an existing account's display name / email / phone. */
+  /** Manager: edit an existing account's display name / email / phone / password. */
   app.patch(
     "/admin/accounts/:id",
     { preHandler: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
     async (req) => {
       const { id } = req.params as { id: string };
       const b = req.body as Static<typeof UpdateAccountBody>;
-      const updated = await updateAccountByManager(deps, id, b, req.authUser!.id);
+      const updated = await updateAccountByManager(
+        deps,
+        id,
+        { displayName: b.displayName, email: b.email, phone: b.phone, password: b.password },
+        req.authUser!.id
+      );
       return {
         id: updated.id,
         role: updated.role,
