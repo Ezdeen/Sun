@@ -500,7 +500,6 @@ export interface paths {
             };
         };
         put?: never;
-        /** Manager: create an account directly (any role), no invitation needed. */
         post: {
             parameters: {
                 query?: never;
@@ -524,7 +523,7 @@ export interface paths {
             };
             responses: {
                 /** @description Default Response */
-                201: {
+                200: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -548,7 +547,6 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Manager: permanently delete an account (blocked if it has business history). */
         delete: {
             parameters: {
                 query?: never;
@@ -571,7 +569,6 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Manager: edit an existing account's display name / email / phone. */
         patch: {
             parameters: {
                 query?: never;
@@ -722,7 +719,24 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Default Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         put?: never;
         post: {
             parameters: {
@@ -774,7 +788,26 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Default Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch: {

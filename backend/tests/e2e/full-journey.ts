@@ -114,6 +114,18 @@ async function main(): Promise<void> {
   check("catalog public → 200", catalog.status === 200 && catBody.wasteTypes.length === 11);
   check("addons present", catBody.addons.length === 6);
 
+  const catalogDenied = await call(citizen, "GET", "/admin/waste-types");
+  check("citizen cannot manage catalog → 403", catalogDenied.status === 403);
+  const newWasteType = await call(manager, "POST", "/admin/waste-types", {
+    code: "E2E_GLASS", category: "glass", nameAr: "زجاج اختبار", nameEn: "Test glass",
+    unit: "kg", pricePerUnit: "0.50"
+  });
+  check("manager creates waste type", newWasteType.status === 200 || newWasteType.status === 201);
+  const updatedWasteType = await call(manager, "PATCH", "/admin/waste-types/E2E_GLASS", { pricePerUnit: "0.60" });
+  check("manager updates waste type", updatedWasteType.status === 200 && updatedWasteType.json.pricePerUnit === "0.60");
+  const deletedWasteType = await call(manager, "DELETE", "/admin/waste-types/E2E_GLASS");
+  check("manager deactivates waste type", deletedWasteType.status === 200 && deletedWasteType.json.active === false);
+
   const est = await call(citizen, "POST", "/pricing/estimate", {
     lines: [
       { wasteTypeCode: "PET_2L", quantity: "100", selectedAddons: ["WASHED", "CAP_REMOVED"] },

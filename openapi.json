@@ -485,7 +485,6 @@
         }
       },
       "post": {
-        "summary": "Manager: create an account directly (any role), no invitation needed.",
         "requestBody": {
           "required": true,
           "content": {
@@ -569,7 +568,7 @@
           }
         },
         "responses": {
-          "201": {
+          "200": {
             "description": "Default Response"
           }
         }
@@ -577,7 +576,6 @@
     },
     "/admin/accounts/{id}": {
       "patch": {
-        "summary": "Manager: edit an existing account's display name / email / phone.",
         "requestBody": {
           "required": true,
           "content": {
@@ -627,7 +625,6 @@
         }
       },
       "delete": {
-        "summary": "Manager: permanently delete an account (blocked if it has business history).",
         "parameters": [
           {
             "schema": {
@@ -781,6 +778,13 @@
       }
     },
     "/admin/waste-types": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
       "post": {
         "requestBody": {
           "required": true,
@@ -958,6 +962,23 @@
             }
           }
         },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "code",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
         "parameters": [
           {
             "schema": {
@@ -1414,6 +1435,33 @@
       }
     },
     "/shipments": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "buyerName": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "notes": {
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
       "get": {
         "parameters": [
           {
@@ -1464,33 +1512,6 @@
             "required": false
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "post": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "buyerName": {
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "notes": {
-                    "maxLength": 500,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Default Response"
@@ -1614,44 +1635,6 @@
       }
     },
     "/invoices": {
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 10000,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "page",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 100,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "pageSize",
-            "required": false
-          },
-          {
-            "schema": {
-              "maxLength": 16,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "status",
-            "required": false
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
       "post": {
         "requestBody": {
           "required": true,
@@ -1690,6 +1673,44 @@
             },
             "in": "header",
             "name": "idempotency-key",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "page",
+            "required": false
+          },
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "pageSize",
+            "required": false
+          },
+          {
+            "schema": {
+              "maxLength": 16,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "status",
             "required": false
           }
         ],

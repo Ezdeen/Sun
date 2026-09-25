@@ -8,6 +8,7 @@ import {
   listActiveWasteTypes,
   listActiveAddonsWithTargets,
   listActiveServiceAreas,
+  listAllWasteTypes,
   updateWasteType,
   insertAddon,
   setAddonTargets,
@@ -46,6 +47,34 @@ export async function readPublicCatalog(db: Db) {
       code: a.code,
       nameAr: a.nameAr,
       zone: a.zone
+    }))
+  };
+}
+
+/** Manager view intentionally includes inactive types so they can be reviewed. */
+export async function readManagedWasteTypes(db: Db) {
+  const [types, addons] = await Promise.all([listAllWasteTypes(db), listAllAddonsWithTargets(db)]);
+  return {
+    wasteTypes: types.map((t) => ({
+      code: t.code,
+      category: t.category,
+      nameAr: t.nameAr,
+      nameEn: t.nameEn,
+      unit: t.unit,
+      pricePerUnit: t.pricePerUnit,
+      capacityWeightKg: t.capacityWeightKg,
+      minWeightKg: t.minWeightKg,
+      isBulkOnly: t.isBulkOnly,
+      displayOrder: t.displayOrder,
+      referencePricePerTon: t.referencePricePerTon,
+      active: t.active
+    })),
+    addons: addons.map((a) => ({
+      code: a.code,
+      nameAr: a.nameAr,
+      nameEn: a.nameEn,
+      bonusPercent: a.bonusPercent,
+      appliesTo: a.appliesTo
     }))
   };
 }
@@ -94,6 +123,14 @@ export async function patchWasteType(
   const row = await updateWasteType(db, code, patch as never);
   if (!row) throw new DomainError("not_found", `waste type ${code} not found`, 404);
   return row;
+}
+
+/**
+ * Keep historical request and invoice references intact. "Delete" therefore
+ * deactivates the type; it disappears from the public catalog immediately.
+ */
+export async function deleteWasteType(db: Db, code: string) {
+  return patchWasteType(db, code, { active: false });
 }
 
 export async function createAddon(

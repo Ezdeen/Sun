@@ -7,8 +7,10 @@ import type { Db } from "../../../shared/db/client.js";
 import type { AuthGuards } from "../../../shared/http/middleware.js";
 import {
   readPublicCatalog,
+  readManagedWasteTypes,
   createWasteType,
   patchWasteType,
+  deleteWasteType,
   createAddon,
   updateAddonTargets
 } from "../application/catalog.js";
@@ -42,6 +44,12 @@ export function registerCatalogRoutes(
 ): void {
   app.get("/catalog", async () => readPublicCatalog(db));
 
+  app.get(
+    "/admin/waste-types",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async () => readManagedWasteTypes(db)
+  );
+
   app.post(
     "/admin/waste-types",
     { preHandler: guards.requirePermission("catalog:manage"), schema: { body: WasteTypeBody } },
@@ -63,6 +71,15 @@ export function registerCatalogRoutes(
       const { code } = req.params as { code: string };
       const b = req.body as Static<typeof WasteTypeBody>;
       return patchWasteType(db, code, b);
+    }
+  );
+
+  app.delete(
+    "/admin/waste-types/:code",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async (req) => {
+      const { code } = req.params as { code: string };
+      return deleteWasteType(db, code);
     }
   );
 
