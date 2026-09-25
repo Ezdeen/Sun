@@ -1,0 +1,465 @@
+/* =========================================================
+   Citizen • Circular Economy Theme
+   طبقة عرض فقط — دون تعديل منطق التطبيق أو البيانات
+   ========================================================= */
+
+.eco-citizen {
+  --eco-primary: #047857;
+  --eco-primary-hover: #065f46;
+  --eco-primary-active: #064e3b;
+
+--eco-text: #16392f;
+  --eco-muted: #52685f;
+  --eco-border: #cbded4;
+  --eco-soft: #edf7f1;
+  --eco-focus: #0369a1;
+
+--eco-shadow:
+    0 2px 5px rgb(16 65 43 / 3%),
+    0 14px 36px -22px rgb(16 65 43 / 24%);
+
+position: relative;
+  isolation: isolate;
+
+padding: clamp(1rem, 2.4vw, 2rem);
+  border: 1px solid #d5e6dc;
+  border-radius: 1.75rem;
+
+color: var(--eco-text);
+  color-scheme: light;
+
+background-color: #f5faf6;
+  background-image:
+    radial-gradient(
+      ellipse at 100% 0%,
+      rgb(16 185 129 / 12%),
+      transparent 48%
+    ),
+    radial-gradient(
+      ellipse at 0% 100%,
+      rgb(132 204 22 / 9%),
+      transparent 45%
+    ),
+    linear-gradient(
+      145deg,
+      #fbfdfb 0%,
+      #f2f8f4 55%,
+      #edf6f1 100%
+    );
+
+box-shadow: var(--eco-shadow);
+}
+
+/* حلقات زخرفية ثابتة: لا تحجب المحتوى ولا تستقبل النقرات. */
+.eco-citizen::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+
+inset-block-start: 0;
+  inset-inline-end: 0;
+
+width: min(21rem, 70%);
+  aspect-ratio: 1;
+
+border-start-end-radius: inherit;
+  pointer-events: none;
+
+background:
+    radial-gradient(
+      circle at 80% 20%,
+      transparent 0 31%,
+      rgb(4 120 87 / 6%) 31.3% 31.7%,
+      transparent 32% 45%,
+      rgb(4 120 87 / 5%) 45.3% 45.7%,
+      transparent 46% 59%,
+      rgb(4 120 87 / 4%) 59.3% 59.7%,
+      transparent 60%
+    );
+}
+
+/* العناوين */
+.eco-citizen :where(h1, h2, h3) {
+  color: #143d2e;
+  text-wrap: balance;
+}
+
+.eco-citizen h1 {
+  line-height: 1.5;
+}
+
+/* رفع وضوح النصوص الثانوية دون تغيير دلالات ألوان الحالات. */
+.eco-citizen :where(.text-stone-400, .text-stone-500) {
+  color: var(--eco-muted);
+}
+
+/* البطاقات والإحصاءات */
+.eco-citizen .eco-card,
+.eco-citizen .eco-stats > * {
+  border: 1px solid var(--eco-border);
+  border-radius: 1.25rem;
+
+background: #fff;
+  box-shadow: var(--eco-shadow);
+
+transition:
+    border-color 180ms ease,
+    box-shadow 220ms ease;
+
+animation: eco-appear 380ms ease-out;
+}
+
+/* تأثير دخول خفيف للإحصاءات، دون حركة مستمرة. */
+.eco-citizen .eco-stats > :nth-child(2) {
+  animation-duration: 440ms;
+}
+
+.eco-citizen .eco-stats > :nth-child(3) {
+  animation-duration: 500ms;
+}
+
+.eco-citizen .eco-card:focus-within {
+  border-color: #74b99a;
+  box-shadow:
+    0 0 0 1px rgb(4 120 87 / 8%),
+    var(--eco-shadow);
+}
+
+/* نجاح إنشاء الطلب: يحافظ على عرض QR كما هو. */
+.eco-citizen.eco-success {
+  border-color: #9bcdb0;
+  box-shadow:
+    0 0 0 4px rgb(16 185 129 / 5%),
+    var(--eco-shadow);
+}
+
+/* الأزرار: لا تُطبق إلا على الأصناف المضافة صراحة. */
+.eco-citizen .eco-button {
+  min-block-size: 44px;
+  padding-inline: 1.15rem;
+
+border: 1px solid var(--eco-primary);
+  border-radius: 0.875rem;
+
+color: #fff;
+  background: linear-gradient(135deg, #047857, #06664b);
+  box-shadow: 0 5px 12px -7px rgb(4 120 87 / 50%);
+
+font-weight: 700;
+  line-height: 1.5;
+
+transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.eco-citizen .eco-button.eco-secondary {
+  border-color: #b4d1c1;
+  color: #065f46;
+  background: #f3faf5;
+  box-shadow: none;
+}
+
+.eco-citizen .eco-button:not(:disabled):not([aria-disabled="true"]):active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.eco-citizen .eco-button:disabled,
+.eco-citizen .eco-button[aria-disabled="true"] {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* الحقول: يستثني مربعات الاختيار والراديو والحقول المخفية. */
+.eco-citizen :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+  select,
+  textarea
+) {
+  min-block-size: 44px;
+  max-inline-size: 100%;
+
+border: 1px solid #adc9b9;
+  border-radius: 0.875rem;
+
+color: #16392f;
+  background-color: #fff;
+
+box-shadow: inset 0 1px 2px rgb(16 65 43 / 3%);
+
+transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.eco-citizen :where(input, textarea)::placeholder {
+  color: #65776d;
+  opacity: 1;
+}
+
+.eco-citizen :where(input, select, textarea):focus {
+  border-color: var(--eco-primary);
+  box-shadow: 0 0 0 4px rgb(4 120 87 / 10%);
+}
+
+/* لا نمحو دلالة الخطأ إذا كانت المكونات تستخدم aria-invalid. */
+.eco-citizen :where(input, select, textarea)[aria-invalid="true"] {
+  border-color: #b91c1c;
+}
+
+.eco-citizen :where(input, select, textarea):disabled {
+  background-color: #edf2ee;
+  cursor: not-allowed;
+}
+
+/* إبقاء المظهر الأصلي لمربع الاختيار ووظائفه. */
+.eco-citizen input[type="checkbox"],
+.eco-citizen input[type="radio"] {
+  accent-color: var(--eco-primary);
+}
+
+/* خيارات الإضافات */
+.eco-citizen .eco-addon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+
+min-block-size: 44px;
+
+border-radius: 0.875rem;
+  border-color: #b8cec0;
+
+background-color: #fff;
+
+transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.eco-citizen .eco-addon.border-brand-500 {
+  border-color: #047857;
+  color: #064e3b;
+  background-color: #e6f5eb;
+  box-shadow: inset 0 0 0 1px rgb(4 120 87 / 12%);
+}
+
+.eco-citizen .eco-addon:focus-within {
+  outline: 3px solid var(--eco-focus);
+  outline-offset: 3px;
+}
+
+/* زر الإزالة يبقى أحمر للدلالة على طبيعة الإجراء. */
+.eco-citizen .eco-remove {
+  min-block-size: 44px;
+  padding-inline: 0.7rem;
+
+border-radius: 0.75rem;
+  color: #b91c1c;
+
+transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+/* صفوف الملخص الموجودة أصلًا في الكود */
+.eco-citizen li.bg-stone-50 {
+  background-color: var(--eco-soft);
+  box-shadow: inset 0 0 0 1px rgb(4 120 87 / 6%);
+}
+
+/* الجداول: لا تغيير للبيانات أو ترتيب الأعمدة. */
+.eco-citizen table {
+  background-color: #fff;
+}
+
+.eco-citizen table thead {
+  color: #244c38;
+  background-color: #eaf4ee;
+}
+
+.eco-citizen table th {
+  color: #244c38;
+  background-color: #eaf4ee;
+  border-color: #d6e5dc;
+}
+
+.eco-citizen table td {
+  border-color: #e1eae4;
+}
+
+.eco-citizen table tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.eco-citizen table tbody tr:focus-within {
+  background-color: #edf7f1;
+}
+
+.eco-citizen table a {
+  text-underline-offset: 0.25em;
+  text-decoration-thickness: 1.5px;
+}
+
+/* الخط الزمني: تغيير العرض فقط. */
+.eco-citizen .eco-timeline {
+  border-inline-start-color: #bad9c8;
+}
+
+.eco-citizen .eco-timeline > li > span:first-child {
+  background-color: #047857;
+  box-shadow:
+    0 0 0 4px #f0f8f3,
+    0 0 0 5px #c1dfce;
+}
+
+/* إبراز آخر نقطة مرئية دون افتراض تغيير حالة الطلب. */
+.eco-citizen .eco-timeline > li:last-child > span:first-child {
+  box-shadow:
+    0 0 0 4px #e3f4e9,
+    0 0 0 7px rgb(4 120 87 / 12%);
+}
+
+/* تركيز واضح لمستخدمي لوحة المفاتيح. */
+.eco-citizen :where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [tabindex]
+):focus-visible {
+  outline: 3px solid var(--eco-focus);
+  outline-offset: 3px;
+}
+
+/* hover للأجهزة التي تدعمه فعليًا فقط. */
+@media (hover: hover) and (pointer: fine) {
+  .eco-citizen .eco-card:hover,
+  .eco-citizen .eco-stats > *:hover {
+    border-color: #a4ccb5;
+    box-shadow:
+      0 3px 8px rgb(16 65 43 / 4%),
+      0 20px 40px -24px rgb(16 65 43 / 30%);
+  }
+
+.eco-citizen .eco-button:not(:disabled):not([aria-disabled="true"]):hover {
+    background: var(--eco-primary-hover);
+    border-color: var(--eco-primary-hover);
+
+transform: translateY(-1px);
+    box-shadow: 0 9px 18px -10px rgb(4 120 87 / 55%);
+  }
+
+.eco-citizen .eco-button.eco-secondary:not(:disabled):not([aria-disabled="true"]):hover {
+    color: #064e3b;
+    background: #e6f4eb;
+    border-color: #7fb697;
+  }
+
+.eco-citizen .eco-addon:hover {
+    border-color: #047857;
+    background-color: #f0f8f3;
+  }
+
+.eco-citizen .eco-addon.border-brand-500:hover {
+    background-color: #ddf0e4;
+  }
+
+.eco-citizen .eco-remove:hover {
+    color: #991b1b;
+    background-color: #fef2f2;
+  }
+
+.eco-citizen table tbody tr:hover {
+    background-color: #f0f8f3;
+  }
+}
+
+@keyframes eco-appear {
+  from {
+    opacity: 0;
+  }
+
+to {
+    opacity: 1;
+  }
+}
+
+/* الشاشات الصغيرة */
+@media (max-width: 640px) {
+  .eco-citizen {
+    padding: 1rem;
+    border-radius: 1.125rem;
+  }
+
+.eco-citizen .eco-card,
+  .eco-citizen .eco-stats > * {
+    border-radius: 1rem;
+  }
+
+.eco-citizen .eco-actions {
+    flex-wrap: wrap;
+  }
+
+.eco-citizen .eco-track-input {
+    min-inline-size: 0;
+    flex-basis: 12rem;
+  }
+}
+
+/* احترام تفضيل تقليل الحركة دون تعطيل مؤشرات تحميل المكونات. */
+@media (prefers-reduced-motion: reduce) {
+  .eco-citizen .eco-card,
+  .eco-citizen .eco-stats > *,
+  .eco-citizen .eco-button,
+  .eco-citizen .eco-addon,
+  .eco-citizen .eco-remove,
+  .eco-citizen table tbody tr,
+  .eco-citizen :where(input, select, textarea) {
+    animation: none;
+    transition: none;
+  }
+
+.eco-citizen .eco-button:not(:disabled):not([aria-disabled="true"]):hover,
+  .eco-citizen .eco-button:not(:disabled):not([aria-disabled="true"]):active {
+    transform: none;
+  }
+}
+
+/* السماح بألوان النظام في وضع التباين القسري. */
+@media (forced-colors: active) {
+  .eco-citizen {
+    color: CanvasText;
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+
+.eco-citizen::before {
+    display: none;
+  }
+
+.eco-citizen .eco-card,
+  .eco-citizen .eco-stats > *,
+  .eco-citizen .eco-button,
+  .eco-citizen .eco-addon {
+    box-shadow: none;
+    border-color: ButtonText;
+  }
+
+.eco-citizen .eco-button {
+    color: ButtonText;
+    background: ButtonFace;
+  }
+
+.eco-citizen :where(a, button, input, select, textarea):focus-visible {
+    outline-color: Highlight;
+  }
+}
