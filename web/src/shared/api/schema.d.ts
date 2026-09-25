@@ -901,7 +901,26 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    code: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Default Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch: {
@@ -916,7 +935,10 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        appliesTo: string[];
+                        nameAr?: string;
+                        nameEn?: string;
+                        bonusPercent?: string;
+                        appliesTo?: string[];
                     };
                 };
             };

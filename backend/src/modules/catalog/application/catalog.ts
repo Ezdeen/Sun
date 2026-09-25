@@ -12,6 +12,7 @@ import {
   updateWasteType,
   insertAddon,
   setAddonTargets,
+  updateAddon,
   listAllAddonsWithTargets
 } from "../infrastructure/catalog-repo.js";
 
@@ -74,7 +75,8 @@ export async function readManagedWasteTypes(db: Db) {
       nameAr: a.nameAr,
       nameEn: a.nameEn,
       bonusPercent: a.bonusPercent,
-      appliesTo: a.appliesTo
+      appliesTo: a.appliesTo,
+      active: a.active
     }))
   };
 }
@@ -159,4 +161,27 @@ export async function updateAddonTargets(db: Db, addonCode: string, codes: strin
   const found = addons.find((a) => a.code === addonCode);
   if (!found) throw new DomainError("not_found", `addon ${addonCode} not found`, 404);
   await setAddonTargets(db, addonCode, codes);
+}
+
+export interface AddonPatchInput {
+  nameAr?: string;
+  nameEn?: string;
+  bonusPercent?: string;
+  appliesTo?: string[];
+  active?: boolean;
+}
+
+export async function patchAddon(db: Db, code: string, patch: AddonPatchInput) {
+  return db.transaction(async (tx) => {
+    const { appliesTo, ...addonPatch } = patch;
+    const row = await updateAddon(tx, code, addonPatch);
+    if (!row) throw new DomainError("not_found", `addon ${code} not found`, 404);
+    if (appliesTo) await setAddonTargets(tx, code, appliesTo);
+    return row;
+  });
+}
+
+/** Deactivation preserves pricing snapshots and historical request records. */
+export async function deleteAddon(db: Db, code: string) {
+  return patchAddon(db, code, { active: false });
 }

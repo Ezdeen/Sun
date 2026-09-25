@@ -1060,11 +1060,23 @@
           "content": {
             "application/json": {
               "schema": {
+                "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "appliesTo"
-                ],
                 "properties": {
+                  "nameAr": {
+                    "minLength": 2,
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "nameEn": {
+                    "minLength": 2,
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "bonusPercent": {
+                    "pattern": "^\\d+(\\.\\d{1,2})?$",
+                    "type": "string"
+                  },
                   "appliesTo": {
                     "minItems": 1,
                     "maxItems": 50,
@@ -1079,6 +1091,23 @@
             }
           }
         },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "code",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
         "parameters": [
           {
             "schema": {

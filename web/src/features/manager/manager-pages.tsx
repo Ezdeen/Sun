@@ -437,7 +437,7 @@ export function ManagerInvitations(): React.ReactNode {
 
 interface CatalogData {
   wasteTypes: { code: string; category: string; nameAr: string; nameEn: string; unit: "bottle" | "liter" | "kg"; pricePerUnit: string; isBulkOnly: boolean; displayOrder: number; active: boolean }[];
-  addons: { code: string; nameAr: string; bonusPercent: string; appliesTo: string[] }[];
+  addons: { code: string; nameAr: string; nameEn: string; bonusPercent: string; appliesTo: string[]; active: boolean }[];
 }
 
 export function ManagerCatalog(): React.ReactNode {
@@ -445,6 +445,8 @@ export function ManagerCatalog(): React.ReactNode {
   const [form, setForm] = useState({ code: "", category: "", nameAr: "", nameEn: "", unit: "kg" as "bottle" | "liter" | "kg", pricePerUnit: "", displayOrder: 100, isBulkOnly: false });
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addonForm, setAddonForm] = useState({ code: "", nameAr: "", nameEn: "", bonusPercent: "", appliesTo: [] as string[] });
+  const [editingAddonCode, setEditingAddonCode] = useState<string | null>(null);
   const catalog = useQuery({
     queryKey: ["manager-waste-types"],
     queryFn: async () => (await api.GET("/admin/waste-types")).data as unknown as CatalogData | undefined
@@ -464,6 +466,21 @@ export function ManagerCatalog(): React.ReactNode {
     mutationFn: async (code: string) => {
       const result = await api.DELETE("/admin/waste-types/{code}", { params: { path: { code } } });
       if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر الحذف");
+    }, onSuccess: refresh, onError: (err) => setError(err.message)
+  });
+  const resetAddon = () => { setAddonForm({ code: "", nameAr: "", nameEn: "", bonusPercent: "", appliesTo: [] }); setEditingAddonCode(null); };
+  const saveAddon = useMutation({
+    mutationFn: async () => {
+      const result = editingAddonCode
+        ? await api.PATCH("/admin/addons/{code}", { params: { path: { code: editingAddonCode } }, body: addonForm as never })
+        : await api.POST("/admin/addons", { body: addonForm as never });
+      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حفظ الإضافة");
+    }, onSuccess: () => { resetAddon(); setError(null); refresh(); }, onError: (err) => setError(err.message)
+  });
+  const removeAddon = useMutation({
+    mutationFn: async (code: string) => {
+      const result = await api.DELETE("/admin/addons/{code}", { params: { path: { code } } });
+      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حذف الإضافة");
     }, onSuccess: refresh, onError: (err) => setError(err.message)
   });
   if (catalog.isLoading) return <Loading />;
@@ -489,12 +506,14 @@ export function ManagerCatalog(): React.ReactNode {
         </div>
         <div>
           <h2 className="mb-3 font-bold">{ar.addons}</h2>
-          <Table head={["الإضافة", ar.bonusPercent, "تنطبق على"]}>
+          <Table head={["الإضافة", ar.bonusPercent, "تنطبق على", "الحالة", ""]}>
             {catalog.data.addons.map((a) => (
               <tr key={a.code}>
                 <Td className="font-semibold">{a.nameAr}</Td>
                 <Td>{a.bonusPercent}%</Td>
                 <Td className="text-xs text-stone-500">{a.appliesTo.join(", ")}</Td>
+                <Td>{a.active ? "نشط" : "معطّل"}</Td>
+                <Td className="whitespace-nowrap"><Button size="sm" variant="secondary" onClick={() => { setAddonForm({ code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, bonusPercent: a.bonusPercent, appliesTo: a.appliesTo }); setEditingAddonCode(a.code); }}>تعديل</Button>{a.active ? <Button size="sm" variant="danger" className="ms-2" loading={removeAddon.isPending} onClick={() => { if (window.confirm(`تعطيل ${a.nameAr}؟`)) removeAddon.mutate(a.code); }}>حذف</Button> : null}</Td>
               </tr>
             ))}
           </Table>
@@ -513,6 +532,20 @@ export function ManagerCatalog(): React.ReactNode {
           <Input label="ترتيب العرض" type="number" min="0" max="999" required value={form.displayOrder} onChange={(e) => setForm({ ...form, displayOrder: Number(e.target.value) })} />
           <label className="flex items-center gap-2 pt-8 text-sm font-semibold"><input type="checkbox" checked={form.isBulkOnly} onChange={(e) => setForm({ ...form, isBulkOnly: e.target.checked })} />كيس منفصل فقط</label>
           <div className="flex gap-2 sm:col-span-2"><Button type="submit" loading={save.isPending}>{editingCode ? "حفظ التعديل" : "إضافة النوع"}</Button>{editingCode ? <Button variant="secondary" onClick={reset}>إلغاء</Button> : null}</div>
+        </form>
+      </Card>
+      <Card className="mt-6">
+        <h2 className="mb-4 font-bold">{editingAddonCode ? "تعديل إضافة تشجيعية" : "إضافة تشجيعية جديدة"}</h2>
+        {error ? <Alert kind="error" className="mb-4">{error}</Alert> : null}
+        <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); saveAddon.mutate(); }}>
+          <Input label="الرمز" dir="ltr" required disabled={Boolean(editingAddonCode)} value={addonForm.code} onChange={(e) => setAddonForm({ ...addonForm, code: e.target.value.toUpperCase() })} />
+          <Input label="النسبة التشجيعية %" dir="ltr" inputMode="decimal" required value={addonForm.bonusPercent} onChange={(e) => setAddonForm({ ...addonForm, bonusPercent: e.target.value })} />
+          <Input label="الاسم بالعربية" required value={addonForm.nameAr} onChange={(e) => setAddonForm({ ...addonForm, nameAr: e.target.value })} />
+          <Input label="الاسم بالإنجليزية" dir="ltr" required value={addonForm.nameEn} onChange={(e) => setAddonForm({ ...addonForm, nameEn: e.target.value })} />
+          <Select label="تنطبق على أنواع النفايات" multiple required size={Math.min(6, Math.max(3, catalog.data.wasteTypes.length))} value={addonForm.appliesTo} onChange={(e) => setAddonForm({ ...addonForm, appliesTo: Array.from(e.currentTarget.selectedOptions, (option) => option.value) })} containerClassName="sm:col-span-2">
+            {catalog.data.wasteTypes.filter((type) => type.active).map((type) => <option key={type.code} value={type.code}>{type.nameAr} ({type.code})</option>)}
+          </Select>
+          <div className="flex gap-2 sm:col-span-2"><Button type="submit" loading={saveAddon.isPending}>{editingAddonCode ? "حفظ التعديل" : "إضافة تشجيعية"}</Button>{editingAddonCode ? <Button variant="secondary" onClick={resetAddon}>إلغاء</Button> : null}</div>
         </form>
       </Card>
     </>

@@ -125,6 +125,14 @@ async function main(): Promise<void> {
   check("manager updates waste type", updatedWasteType.status === 200 && updatedWasteType.json.pricePerUnit === "0.60");
   const deletedWasteType = await call(manager, "DELETE", "/admin/waste-types/E2E_GLASS");
   check("manager deactivates waste type", deletedWasteType.status === 200 && deletedWasteType.json.active === false);
+  const newAddon = await call(manager, "POST", "/admin/addons", {
+    code: "E2E_BONUS", nameAr: "حافز اختبار", nameEn: "Test bonus", bonusPercent: "2.50", appliesTo: ["PET_2L"]
+  });
+  check("manager creates addon", newAddon.status === 200 || newAddon.status === 201);
+  const updatedAddon = await call(manager, "PATCH", "/admin/addons/E2E_BONUS", { bonusPercent: "3.00", appliesTo: ["HDPE"] });
+  check("manager updates addon", updatedAddon.status === 200 && updatedAddon.json.bonusPercent === "3.00");
+  const deletedAddon = await call(manager, "DELETE", "/admin/addons/E2E_BONUS");
+  check("manager deactivates addon", deletedAddon.status === 200 && deletedAddon.json.active === false);
 
   const est = await call(citizen, "POST", "/pricing/estimate", {
     lines: [

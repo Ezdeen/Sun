@@ -12,7 +12,8 @@ import {
   patchWasteType,
   deleteWasteType,
   createAddon,
-  updateAddonTargets
+  patchAddon,
+  deleteAddon
 } from "../application/catalog.js";
 
 const WasteTypeBody = Type.Object({
@@ -36,6 +37,13 @@ const AddonBody = Type.Object({
   bonusPercent: Type.String({ pattern: "^\\d+(\\.\\d{1,2})?$" }),
   appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
 });
+
+const AddonPatchBody = Type.Object({
+  nameAr: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
+  nameEn: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
+  bonusPercent: Type.Optional(Type.String({ pattern: "^\\d+(\\.\\d{1,2})?$" })),
+  appliesTo: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 }))
+}, { additionalProperties: false });
 
 export function registerCatalogRoutes(
   app: FastifyInstance,
@@ -97,16 +105,22 @@ export function registerCatalogRoutes(
     {
       preHandler: guards.requirePermission("catalog:manage"),
       schema: {
-        body: Type.Object({
-          appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
-        })
+        body: AddonPatchBody
       }
     },
     async (req) => {
       const { code } = req.params as { code: string };
-      const b = req.body as { appliesTo: string[] };
-      await updateAddonTargets(db, code, b.appliesTo);
-      return { ok: true };
+      const b = req.body as Static<typeof AddonPatchBody>;
+      return patchAddon(db, code, b);
+    }
+  );
+
+  app.delete(
+    "/admin/addons/:code",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async (req) => {
+      const { code } = req.params as { code: string };
+      return deleteAddon(db, code);
     }
   );
 }
