@@ -52,6 +52,42 @@ export async function listActiveServiceAreas(db: DbOrTx) {
     .orderBy(asc(serviceAreas.code));
 }
 
+export async function listAllServiceAreas(db: DbOrTx) {
+  return db.select().from(serviceAreas).orderBy(asc(serviceAreas.code));
+}
+
+export async function getServiceAreaById(db: DbOrTx, id: string) {
+  const rows = await db.select().from(serviceAreas).where(eq(serviceAreas.id, id)).limit(1);
+  return rows[0];
+}
+
+export async function insertServiceArea(
+  db: DbOrTx,
+  input: typeof serviceAreas.$inferInsert
+) {
+  const [row] = await db.insert(serviceAreas).values(input).onConflictDoNothing().returning();
+  return row;
+}
+
+export async function updateServiceArea(
+  db: DbOrTx,
+  id: string,
+  patch: Partial<typeof serviceAreas.$inferInsert>
+) {
+  const [row] = await db.update(serviceAreas).set(patch).where(eq(serviceAreas.id, id)).returning();
+  return row;
+}
+
+/**
+ * Hard-delete a service area. Restricted by FK from citizens/collectors/
+ * authorities/collection_requests — callers should catch the FK violation
+ * and offer disabling (active=false) instead.
+ */
+export async function deleteServiceAreaById(db: DbOrTx, id: string): Promise<boolean> {
+  const res = await db.delete(serviceAreas).where(eq(serviceAreas.id, id)).returning({ id: serviceAreas.id });
+  return res.length > 0;
+}
+
 export async function getWasteType(db: DbOrTx, code: string) {
   const rows = await db.select().from(wasteTypes).where(eq(wasteTypes.code, code)).limit(1);
   return rows[0];
@@ -97,15 +133,6 @@ export async function setAddonTargets(db: DbOrTx, addonCode: string, codes: stri
       .values({ addonCode, wasteTypeCode: code })
       .onConflictDoNothing();
   }
-}
-
-export async function updateAddon(
-  db: DbOrTx,
-  code: string,
-  patch: Partial<typeof priceAddons.$inferInsert>
-) {
-  const [row] = await db.update(priceAddons).set(patch).where(eq(priceAddons.code, code)).returning();
-  return row;
 }
 
 export async function countCatalogItems(db: DbOrTx) {

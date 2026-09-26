@@ -436,52 +436,14 @@ export function ManagerInvitations(): React.ReactNode {
 }
 
 interface CatalogData {
-  wasteTypes: { code: string; category: string; nameAr: string; nameEn: string; unit: "bottle" | "liter" | "kg"; pricePerUnit: string; isBulkOnly: boolean; displayOrder: number; active: boolean }[];
-  addons: { code: string; nameAr: string; nameEn: string; bonusPercent: string; appliesTo: string[]; active: boolean }[];
+  wasteTypes: { code: string; category: string; nameAr: string; unit: string; pricePerUnit: string; isBulkOnly: boolean }[];
+  addons: { code: string; nameAr: string; bonusPercent: string; appliesTo: string[] }[];
 }
 
 export function ManagerCatalog(): React.ReactNode {
-  const qc = useQueryClient();
-  const [form, setForm] = useState({ code: "", category: "", nameAr: "", nameEn: "", unit: "kg" as "bottle" | "liter" | "kg", pricePerUnit: "", displayOrder: 100, isBulkOnly: false });
-  const [editingCode, setEditingCode] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [addonForm, setAddonForm] = useState({ code: "", nameAr: "", nameEn: "", bonusPercent: "", appliesTo: [] as string[] });
-  const [editingAddonCode, setEditingAddonCode] = useState<string | null>(null);
   const catalog = useQuery({
-    queryKey: ["manager-waste-types"],
-    queryFn: async () => (await api.GET("/admin/waste-types")).data as unknown as CatalogData | undefined
-  });
-  const reset = () => { setForm({ code: "", category: "", nameAr: "", nameEn: "", unit: "kg", pricePerUnit: "", displayOrder: 100, isBulkOnly: false }); setEditingCode(null); };
-  const refresh = () => { void qc.invalidateQueries({ queryKey: ["manager-waste-types"] }); void qc.invalidateQueries({ queryKey: ["catalog"] }); };
-  const save = useMutation({
-    mutationFn: async () => {
-      const result = editingCode
-        ? await api.PATCH("/admin/waste-types/{code}", { params: { path: { code: editingCode } }, body: form as never })
-        : await api.POST("/admin/waste-types", { body: form as never });
-      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر الحفظ");
-    },
-    onSuccess: () => { reset(); setError(null); refresh(); }, onError: (err) => setError(err.message)
-  });
-  const remove = useMutation({
-    mutationFn: async (code: string) => {
-      const result = await api.DELETE("/admin/waste-types/{code}", { params: { path: { code } } });
-      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر الحذف");
-    }, onSuccess: refresh, onError: (err) => setError(err.message)
-  });
-  const resetAddon = () => { setAddonForm({ code: "", nameAr: "", nameEn: "", bonusPercent: "", appliesTo: [] }); setEditingAddonCode(null); };
-  const saveAddon = useMutation({
-    mutationFn: async () => {
-      const result = editingAddonCode
-        ? await api.PATCH("/admin/addons/{code}", { params: { path: { code: editingAddonCode } }, body: addonForm as never })
-        : await api.POST("/admin/addons", { body: addonForm as never });
-      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حفظ الإضافة");
-    }, onSuccess: () => { resetAddon(); setError(null); refresh(); }, onError: (err) => setError(err.message)
-  });
-  const removeAddon = useMutation({
-    mutationFn: async (code: string) => {
-      const result = await api.DELETE("/admin/addons/{code}", { params: { path: { code } } });
-      if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حذف الإضافة");
-    }, onSuccess: refresh, onError: (err) => setError(err.message)
+    queryKey: ["catalog"],
+    queryFn: async () => (await api.GET("/catalog")).data as unknown as CatalogData | undefined
   });
   if (catalog.isLoading) return <Loading />;
   if (catalog.isError || !catalog.data) return <ErrorState />;
@@ -491,63 +453,315 @@ export function ManagerCatalog(): React.ReactNode {
       <div className="grid gap-6 lg:grid-cols-2">
         <div>
           <h2 className="mb-3 font-bold">{ar.wasteTypes}</h2>
-          <Table head={["النوع", ar.category, ar.unit, ar.pricePerUnit, "الحالة", ""]}>
+          <Table head={["النوع", ar.category, ar.unit, ar.pricePerUnit]}>
             {catalog.data.wasteTypes.map((t) => (
               <tr key={t.code}>
                 <Td className="font-semibold">{t.nameAr}{t.isBulkOnly ? " (كيس منفصل)" : ""}</Td>
                 <Td>{t.category}</Td>
                 <Td>{t.unit}</Td>
                 <Td>{t.pricePerUnit} ₪</Td>
-                <Td>{t.active ? "نشط" : "معطّل"}</Td>
-                <Td className="whitespace-nowrap"><Button size="sm" variant="secondary" onClick={() => { setForm({ code: t.code, category: t.category, nameAr: t.nameAr, nameEn: t.nameEn, unit: t.unit, pricePerUnit: t.pricePerUnit, displayOrder: t.displayOrder, isBulkOnly: t.isBulkOnly }); setEditingCode(t.code); }}>تعديل</Button>{t.active ? <Button size="sm" variant="danger" className="ms-2" loading={remove.isPending} onClick={() => { if (window.confirm(`تعطيل ${t.nameAr}؟`)) remove.mutate(t.code); }}>حذف</Button> : null}</Td>
               </tr>
             ))}
           </Table>
         </div>
         <div>
           <h2 className="mb-3 font-bold">{ar.addons}</h2>
-          <Table head={["الإضافة", ar.bonusPercent, "تنطبق على", "الحالة", ""]}>
+          <Table head={["الإضافة", ar.bonusPercent, "تنطبق على"]}>
             {catalog.data.addons.map((a) => (
               <tr key={a.code}>
                 <Td className="font-semibold">{a.nameAr}</Td>
                 <Td>{a.bonusPercent}%</Td>
                 <Td className="text-xs text-stone-500">{a.appliesTo.join(", ")}</Td>
-                <Td>{a.active ? "نشط" : "معطّل"}</Td>
-                <Td className="whitespace-nowrap"><Button size="sm" variant="secondary" onClick={() => { setAddonForm({ code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, bonusPercent: a.bonusPercent, appliesTo: a.appliesTo }); setEditingAddonCode(a.code); }}>تعديل</Button>{a.active ? <Button size="sm" variant="danger" className="ms-2" loading={removeAddon.isPending} onClick={() => { if (window.confirm(`تعطيل ${a.nameAr}؟`)) removeAddon.mutate(a.code); }}>حذف</Button> : null}</Td>
               </tr>
             ))}
           </Table>
         </div>
       </div>
-      <Card className="mt-6">
-        <h2 className="mb-4 font-bold">{editingCode ? "تعديل نوع نفايات" : "إضافة نوع نفايات"}</h2>
-        {error ? <Alert kind="error" className="mb-4">{error}</Alert> : null}
-        <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-          <Input label="الرمز" dir="ltr" required disabled={Boolean(editingCode)} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
-          <Input label={ar.category} required value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-          <Input label="الاسم بالعربية" required value={form.nameAr} onChange={(e) => setForm({ ...form, nameAr: e.target.value })} />
-          <Input label="الاسم بالإنجليزية" dir="ltr" required value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
-          <Select label={ar.unit} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value as typeof form.unit })}><option value="kg">kg</option><option value="bottle">bottle</option><option value="liter">liter</option></Select>
-          <Input label={ar.pricePerUnit} dir="ltr" inputMode="decimal" required value={form.pricePerUnit} onChange={(e) => setForm({ ...form, pricePerUnit: e.target.value })} />
-          <Input label="ترتيب العرض" type="number" min="0" max="999" required value={form.displayOrder} onChange={(e) => setForm({ ...form, displayOrder: Number(e.target.value) })} />
-          <label className="flex items-center gap-2 pt-8 text-sm font-semibold"><input type="checkbox" checked={form.isBulkOnly} onChange={(e) => setForm({ ...form, isBulkOnly: e.target.checked })} />كيس منفصل فقط</label>
-          <div className="flex gap-2 sm:col-span-2"><Button type="submit" loading={save.isPending}>{editingCode ? "حفظ التعديل" : "إضافة النوع"}</Button>{editingCode ? <Button variant="secondary" onClick={reset}>إلغاء</Button> : null}</div>
-        </form>
-      </Card>
-      <Card className="mt-6">
-        <h2 className="mb-4 font-bold">{editingAddonCode ? "تعديل إضافة تشجيعية" : "إضافة تشجيعية جديدة"}</h2>
-        {error ? <Alert kind="error" className="mb-4">{error}</Alert> : null}
-        <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); saveAddon.mutate(); }}>
-          <Input label="الرمز" dir="ltr" required disabled={Boolean(editingAddonCode)} value={addonForm.code} onChange={(e) => setAddonForm({ ...addonForm, code: e.target.value.toUpperCase() })} />
-          <Input label="النسبة التشجيعية %" dir="ltr" inputMode="decimal" required value={addonForm.bonusPercent} onChange={(e) => setAddonForm({ ...addonForm, bonusPercent: e.target.value })} />
-          <Input label="الاسم بالعربية" required value={addonForm.nameAr} onChange={(e) => setAddonForm({ ...addonForm, nameAr: e.target.value })} />
-          <Input label="الاسم بالإنجليزية" dir="ltr" required value={addonForm.nameEn} onChange={(e) => setAddonForm({ ...addonForm, nameEn: e.target.value })} />
-          <Select label="تنطبق على أنواع النفايات" multiple required size={Math.min(6, Math.max(3, catalog.data.wasteTypes.length))} value={addonForm.appliesTo} onChange={(e) => setAddonForm({ ...addonForm, appliesTo: Array.from(e.currentTarget.selectedOptions, (option) => option.value) })} containerClassName="sm:col-span-2">
-            {catalog.data.wasteTypes.filter((type) => type.active).map((type) => <option key={type.code} value={type.code}>{type.nameAr} ({type.code})</option>)}
+    </>
+  );
+}
+
+const ZONE_LABELS: Record<string, string> = { north: ar.zoneNorth, center: ar.zoneCenter, south: ar.zoneSouth };
+
+interface ServiceAreaAuthority {
+  userId: string;
+  displayName: string;
+  email: string;
+}
+
+interface ServiceAreaItem {
+  id: string;
+  code: string;
+  nameAr: string;
+  nameEn: string;
+  zone: string;
+  households: number;
+  active: boolean;
+  createdAt: string;
+  authorities: ServiceAreaAuthority[];
+}
+
+interface ServiceAreasData {
+  items: ServiceAreaItem[];
+}
+
+/** Fetches the list of authority accounts, for the "link to authority" selector. */
+function useAuthorityAccounts() {
+  return useQuery({
+    queryKey: ["accounts", "authority"],
+    queryFn: async () =>
+      (await api.GET("/admin/accounts", { params: { query: { page: 1, pageSize: 100, role: "authority" } } }))
+        .data as unknown as AccountsData | undefined
+  });
+}
+
+function AuthoritySelect({
+  value, onChange, authorities
+}: { value: string; onChange: (v: string) => void; authorities: AccountItem[] }): React.ReactNode {
+  return (
+    <Select label={ar.linkedAuthority} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">— بدون ربط —</option>
+      {authorities.map((a) => (
+        <option key={a.id} value={a.id}>{a.displayName} ({a.email})</option>
+      ))}
+    </Select>
+  );
+}
+
+function CreateServiceAreaForm({ onCreated }: { onCreated: () => void }): React.ReactNode {
+  const authorityAccounts = useAuthorityAccounts();
+  const [form, setForm] = useState({
+    code: "", nameAr: "", nameEn: "", zone: "center", households: "0", authorityUserId: ""
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.POST("/admin/service-areas", {
+        body: {
+          code: form.code.trim().toUpperCase(),
+          nameAr: form.nameAr,
+          nameEn: form.nameEn,
+          zone: form.zone as never,
+          households: Number(form.households) || 0
+        }
+      });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر إنشاء المنطقة");
+      const area = res.data as unknown as ServiceAreaItem;
+      if (form.authorityUserId) {
+        const link = await api.PATCH("/admin/service-areas/{id}/authority", {
+          params: { path: { id: area.id } },
+          body: { authorityUserId: form.authorityUserId }
+        });
+        if (!link.response.ok) throw new Error((link.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر ربط الهيئة");
+      }
+      return area;
+    },
+    onSuccess: () => {
+      setError(null);
+      setForm({ code: "", nameAr: "", nameEn: "", zone: "center", households: "0", authorityUserId: "" });
+      setOpen(false);
+      onCreated();
+    },
+    onError: (err) => setError(err.message)
+  });
+
+  if (!open) {
+    return (
+      <div className="mb-4">
+        <Button onClick={() => setOpen(true)}>＋ إضافة منطقة خدمة</Button>
+      </div>
+    );
+  }
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-bold">إضافة منطقة خدمة</h2>
+        <button className="text-sm text-stone-500 hover:underline" onClick={() => setOpen(false)}>إلغاء ✕</button>
+      </div>
+      <form
+        className="grid gap-3 sm:grid-cols-2"
+        onSubmit={(e) => { e.preventDefault(); createMutation.mutate(); }}
+      >
+        <Input label="الرمز (Code)" dir="ltr" required value={form.code}
+          onChange={(e) => setForm({ ...form, code: e.target.value })} />
+        <Input label={ar.displayName + " (عربي)"} required value={form.nameAr}
+          onChange={(e) => setForm({ ...form, nameAr: e.target.value })} />
+        <Input label={ar.displayName + " (إنجليزي)"} dir="ltr" required value={form.nameEn}
+          onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
+        <Select label="المنطقة (Zone)" value={form.zone} onChange={(e) => setForm({ ...form, zone: e.target.value })}>
+          <option value="north">{ar.zoneNorth}</option>
+          <option value="center">{ar.zoneCenter}</option>
+          <option value="south">{ar.zoneSouth}</option>
+        </Select>
+        <Input label={ar.household} type="number" min="0" dir="ltr" value={form.households}
+          onChange={(e) => setForm({ ...form, households: e.target.value })} />
+        <AuthoritySelect
+          value={form.authorityUserId}
+          onChange={(v) => setForm({ ...form, authorityUserId: v })}
+          authorities={authorityAccounts.data?.items ?? []}
+        />
+        {error ? <div className="sm:col-span-2"><Alert kind="error">{error}</Alert></div> : null}
+        <div className="sm:col-span-2">
+          <Button type="submit" disabled={createMutation.isPending}>
+            {createMutation.isPending ? "…" : "إنشاء المنطقة"}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function EditServiceAreaRow({ area, onDone }: { area: ServiceAreaItem; onDone: () => void }): React.ReactNode {
+  const authorityAccounts = useAuthorityAccounts();
+  const [form, setForm] = useState({
+    code: area.code, nameAr: area.nameAr, nameEn: area.nameEn, zone: area.zone,
+    households: String(area.households), authorityUserId: area.authorities[0]?.userId ?? ""
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.PATCH("/admin/service-areas/{id}", {
+        params: { path: { id: area.id } },
+        body: {
+          code: form.code.trim().toUpperCase(),
+          nameAr: form.nameAr,
+          nameEn: form.nameEn,
+          zone: form.zone as never,
+          households: Number(form.households) || 0
+        }
+      });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر التحديث");
+
+      const currentAuthorityId = area.authorities[0]?.userId ?? "";
+      if (form.authorityUserId && form.authorityUserId !== currentAuthorityId) {
+        const link = await api.PATCH("/admin/service-areas/{id}/authority", {
+          params: { path: { id: area.id } },
+          body: { authorityUserId: form.authorityUserId }
+        });
+        if (!link.response.ok) throw new Error((link.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر ربط الهيئة");
+      }
+      return res.data;
+    },
+    onSuccess: onDone,
+    onError: (err) => setError(err.message)
+  });
+
+  return (
+    <tr className="bg-brand-50">
+      <Td colSpan={7}>
+        <form
+          className="grid gap-3 sm:grid-cols-3"
+          onSubmit={(e) => { e.preventDefault(); updateMutation.mutate(); }}
+        >
+          <Input label="الرمز (Code)" dir="ltr" required value={form.code}
+            onChange={(e) => setForm({ ...form, code: e.target.value })} />
+          <Input label={ar.displayName + " (عربي)"} required value={form.nameAr}
+            onChange={(e) => setForm({ ...form, nameAr: e.target.value })} />
+          <Input label={ar.displayName + " (إنجليزي)"} dir="ltr" required value={form.nameEn}
+            onChange={(e) => setForm({ ...form, nameEn: e.target.value })} />
+          <Select label="المنطقة (Zone)" value={form.zone} onChange={(e) => setForm({ ...form, zone: e.target.value })}>
+            <option value="north">{ar.zoneNorth}</option>
+            <option value="center">{ar.zoneCenter}</option>
+            <option value="south">{ar.zoneSouth}</option>
           </Select>
-          <div className="flex gap-2 sm:col-span-2"><Button type="submit" loading={saveAddon.isPending}>{editingAddonCode ? "حفظ التعديل" : "إضافة تشجيعية"}</Button>{editingAddonCode ? <Button variant="secondary" onClick={resetAddon}>إلغاء</Button> : null}</div>
+          <Input label={ar.household} type="number" min="0" dir="ltr" value={form.households}
+            onChange={(e) => setForm({ ...form, households: e.target.value })} />
+          <AuthoritySelect
+            value={form.authorityUserId}
+            onChange={(v) => setForm({ ...form, authorityUserId: v })}
+            authorities={authorityAccounts.data?.items ?? []}
+          />
+          <div className="flex items-end gap-2 sm:col-span-3">
+            <Button type="submit" disabled={updateMutation.isPending}>{updateMutation.isPending ? "…" : ar.save}</Button>
+            <Button type="button" variant="secondary" onClick={onDone}>{ar.cancel}</Button>
+          </div>
+          {error ? <div className="sm:col-span-3"><Alert kind="error">{error}</Alert></div> : null}
         </form>
-      </Card>
+      </Td>
+    </tr>
+  );
+}
+
+export function ManagerServiceAreas(): React.ReactNode {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const list = useQuery({
+    queryKey: ["service-areas"],
+    queryFn: async () => (await api.GET("/admin/service-areas")).data as unknown as ServiceAreasData | undefined
+  });
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["service-areas"] });
+    void qc.invalidateQueries({ queryKey: ["catalog"] });
+  };
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.DELETE("/admin/service-areas/{id}", { params: { path: { id } } });
+      if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر الحذف");
+      return res.data;
+    },
+    onSuccess: () => {
+      setDeleteError(null);
+      refresh();
+    },
+    onError: (err) => setDeleteError(err.message)
+  });
+
+  if (list.isLoading) return <Loading />;
+  if (list.isError || !list.data) return <ErrorState />;
+
+  return (
+    <>
+      <PageHeader title={ar.serviceAreas} subtitle={`${list.data.items.length} منطقة`} />
+      <CreateServiceAreaForm onCreated={refresh} />
+      {deleteError ? <div className="mb-4"><Alert kind="error">{deleteError}</Alert></div> : null}
+      {list.data.items.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <Table head={["الاسم", "الرمز", "المنطقة", ar.household, ar.linkedAuthority, ar.status, ""]}>
+          {list.data.items.map((a) =>
+            editingId === a.id ? (
+              <EditServiceAreaRow key={a.id} area={a} onDone={() => { setEditingId(null); refresh(); }} />
+            ) : (
+              <tr key={a.id}>
+                <Td className="font-semibold">{a.nameAr}</Td>
+                <Td dir="ltr" className="font-mono text-xs text-stone-500">{a.code}</Td>
+                <Td>{ZONE_LABELS[a.zone] ?? a.zone}</Td>
+                <Td className="text-stone-500">{a.households}</Td>
+                <Td className="text-sm">
+                  {a.authorities.length > 0
+                    ? a.authorities.map((u) => u.displayName).join("، ")
+                    : <span className="text-stone-400">— غير مربوطة —</span>}
+                </Td>
+                <Td><StatusBadge code={a.active ? "active" : "void"} label={a.active ? "فعّالة" : "معطّلة"} /></Td>
+                <Td>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => setEditingId(a.id)}>تعديل</Button>
+                    <Button
+                      variant="danger"
+                      disabled={deleteMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm(`هل أنت متأكد من حذف منطقة "${a.nameAr}"؟ هذا الإجراء نهائي.`)) {
+                          deleteMutation.mutate(a.id);
+                        }
+                      }}
+                    >
+                      حذف
+                    </Button>
+                  </div>
+                </Td>
+              </tr>
+            )
+          )}
+        </Table>
+      )}
     </>
   );
 }

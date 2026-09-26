@@ -58,6 +58,7 @@ const NAV: Record<Role, NavItem[]> = {
   manager: [
     { to: "/manager", label: ar.dashboard, end: true },
     { to: "/manager/accounts", label: ar.accounts },
+    { to: "/manager/service-areas", label: ar.serviceAreas },
     { to: "/manager/invitations", label: ar.invitations },
     { to: "/manager/catalog", label: ar.catalog },
     { to: "/manager/settings", label: ar.settings },

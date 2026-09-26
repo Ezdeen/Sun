@@ -485,6 +485,7 @@
         }
       },
       "post": {
+        "summary": "Manager: create an account directly (any role), no invitation needed.",
         "requestBody": {
           "required": true,
           "content": {
@@ -568,7 +569,7 @@
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Default Response"
           }
         }
@@ -576,6 +577,7 @@
     },
     "/admin/accounts/{id}": {
       "patch": {
+        "summary": "Manager: edit an existing account's display name / email / phone.",
         "requestBody": {
           "required": true,
           "content": {
@@ -625,6 +627,7 @@
         }
       },
       "delete": {
+        "summary": "Manager: permanently delete an account (blocked if it has business history).",
         "parameters": [
           {
             "schema": {
@@ -778,13 +781,6 @@
       }
     },
     "/admin/waste-types": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
       "post": {
         "requestBody": {
           "required": true,
@@ -977,23 +973,6 @@
             "description": "Default Response"
           }
         }
-      },
-      "delete": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "code",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
       }
     },
     "/admin/addons": {
@@ -1060,23 +1039,11 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": false,
                 "type": "object",
+                "required": [
+                  "appliesTo"
+                ],
                 "properties": {
-                  "nameAr": {
-                    "minLength": 2,
-                    "maxLength": 80,
-                    "type": "string"
-                  },
-                  "nameEn": {
-                    "minLength": 2,
-                    "maxLength": 80,
-                    "type": "string"
-                  },
-                  "bonusPercent": {
-                    "pattern": "^\\d+(\\.\\d{1,2})?$",
-                    "type": "string"
-                  },
                   "appliesTo": {
                     "minItems": 1,
                     "maxItems": 50,
@@ -1091,23 +1058,6 @@
             }
           }
         },
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "code",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "delete": {
         "parameters": [
           {
             "schema": {
@@ -1464,33 +1414,6 @@
       }
     },
     "/shipments": {
-      "post": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "buyerName": {
-                    "maxLength": 120,
-                    "type": "string"
-                  },
-                  "notes": {
-                    "maxLength": 500,
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
       "get": {
         "parameters": [
           {
@@ -1541,6 +1464,33 @@
             "required": false
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "buyerName": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "notes": {
+                    "maxLength": 500,
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"
@@ -1664,6 +1614,44 @@
       }
     },
     "/invoices": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "page",
+            "required": false
+          },
+          {
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "integer"
+            },
+            "in": "query",
+            "name": "pageSize",
+            "required": false
+          },
+          {
+            "schema": {
+              "maxLength": 16,
+              "type": "string"
+            },
+            "in": "query",
+            "name": "status",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
       "post": {
         "requestBody": {
           "required": true,
@@ -1702,44 +1690,6 @@
             },
             "in": "header",
             "name": "idempotency-key",
-            "required": false
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      },
-      "get": {
-        "parameters": [
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 10000,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "page",
-            "required": false
-          },
-          {
-            "schema": {
-              "minimum": 1,
-              "maximum": 100,
-              "type": "integer"
-            },
-            "in": "query",
-            "name": "pageSize",
-            "required": false
-          },
-          {
-            "schema": {
-              "maxLength": 16,
-              "type": "string"
-            },
-            "in": "query",
-            "name": "status",
             "required": false
           }
         ],
@@ -2099,6 +2049,224 @@
     },
     "/manager/dashboard": {
       "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/admin/service-areas": {
+      "get": {
+        "summary": "Manager: list every service area with its linked authority account(s).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "summary": "Manager: create a new service area.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "nameAr",
+                  "nameEn",
+                  "zone"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[A-Z0-9_-]+$"
+                  },
+                  "nameAr": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 80
+                  },
+                  "nameEn": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 80
+                  },
+                  "zone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "north"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "center"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "south"
+                        ]
+                      }
+                    ]
+                  },
+                  "households": {
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "type": "integer"
+                  },
+                  "active": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/admin/service-areas/{id}": {
+      "patch": {
+        "summary": "Manager: edit an existing service area.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 32,
+                    "pattern": "^[A-Z0-9_-]+$"
+                  },
+                  "nameAr": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 80
+                  },
+                  "nameEn": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 80
+                  },
+                  "zone": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "north"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "center"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "south"
+                        ]
+                      }
+                    ]
+                  },
+                  "households": {
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "type": "integer"
+                  },
+                  "active": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Manager: delete a service area (blocked if it has linked accounts/requests).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/admin/service-areas/{id}/authority": {
+      "patch": {
+        "summary": "Manager: link (assign/reassign) an existing authority account to this service area.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "authorityUserId"
+                ],
+                "properties": {
+                  "authorityUserId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"

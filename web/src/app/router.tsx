@@ -24,7 +24,7 @@ import {
 } from "../features/finance/finance-pages.js";
 import {
   ManagerAccounts, ManagerAudit, ManagerCatalog, ManagerDashboard, ManagerInvitations,
-  ManagerSettings, ManagerTraceability
+  ManagerServiceAreas, ManagerSettings, ManagerTraceability
 } from "../features/manager/manager-pages.js";
 
 export const router = createBrowserRouter([
@@ -106,6 +106,7 @@ export const router = createBrowserRouter([
       { index: true, element: <ManagerDashboard /> },
       { path: "overview", element: <ManagerDashboard /> },
       { path: "accounts", element: <ManagerAccounts /> },
+      { path: "service-areas", element: <ManagerServiceAreas /> },
       { path: "invitations", element: <ManagerInvitations /> },
       { path: "catalog", element: <ManagerCatalog /> },
       { path: "addons", element: <ManagerCatalog /> },

@@ -7,13 +7,15 @@ import type { Db } from "../../../shared/db/client.js";
 import type { AuthGuards } from "../../../shared/http/middleware.js";
 import {
   readPublicCatalog,
-  readManagedWasteTypes,
   createWasteType,
   patchWasteType,
-  deleteWasteType,
   createAddon,
-  patchAddon,
-  deleteAddon
+  updateAddonTargets,
+  listServiceAreasForManager,
+  createServiceArea,
+  patchServiceArea,
+  deleteServiceArea,
+  linkServiceAreaAuthority
 } from "../application/catalog.js";
 
 const WasteTypeBody = Type.Object({
@@ -30,6 +32,21 @@ const WasteTypeBody = Type.Object({
   referencePricePerTon: Type.Optional(Type.String({ pattern: "^\\d+(\\.\\d{1,2})?$" }))
 });
 
+const ServiceAreaZone = Type.Union([Type.Literal("north"), Type.Literal("center"), Type.Literal("south")]);
+
+const ServiceAreaBody = Type.Object({
+  code: Type.String({ minLength: 2, maxLength: 32, pattern: "^[A-Z0-9_-]+$" }),
+  nameAr: Type.String({ minLength: 2, maxLength: 80 }),
+  nameEn: Type.String({ minLength: 2, maxLength: 80 }),
+  zone: ServiceAreaZone,
+  households: Type.Optional(Type.Integer({ minimum: 0, maximum: 1_000_000 })),
+  active: Type.Optional(Type.Boolean())
+});
+
+const ServiceAreaAuthorityBody = Type.Object({
+  authorityUserId: Type.String({ format: "uuid" })
+});
+
 const AddonBody = Type.Object({
   code: Type.String({ minLength: 2, maxLength: 32, pattern: "^[A-Z_]+$" }),
   nameAr: Type.String({ minLength: 2, maxLength: 80 }),
@@ -38,25 +55,12 @@ const AddonBody = Type.Object({
   appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
 });
 
-const AddonPatchBody = Type.Object({
-  nameAr: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
-  nameEn: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
-  bonusPercent: Type.Optional(Type.String({ pattern: "^\\d+(\\.\\d{1,2})?$" })),
-  appliesTo: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 }))
-}, { additionalProperties: false });
-
 export function registerCatalogRoutes(
   app: FastifyInstance,
   db: Db,
   guards: AuthGuards
 ): void {
   app.get("/catalog", async () => readPublicCatalog(db));
-
-  app.get(
-    "/admin/waste-types",
-    { preHandler: guards.requirePermission("catalog:manage") },
-    async () => readManagedWasteTypes(db)
-  );
 
   app.post(
     "/admin/waste-types",
@@ -82,15 +86,6 @@ export function registerCatalogRoutes(
     }
   );
 
-  app.delete(
-    "/admin/waste-types/:code",
-    { preHandler: guards.requirePermission("catalog:manage") },
-    async (req) => {
-      const { code } = req.params as { code: string };
-      return deleteWasteType(db, code);
-    }
-  );
-
   app.post(
     "/admin/addons",
     { preHandler: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
@@ -105,22 +100,71 @@ export function registerCatalogRoutes(
     {
       preHandler: guards.requirePermission("catalog:manage"),
       schema: {
-        body: AddonPatchBody
+        body: Type.Object({
+          appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
+        })
       }
     },
     async (req) => {
       const { code } = req.params as { code: string };
-      const b = req.body as Static<typeof AddonPatchBody>;
-      return patchAddon(db, code, b);
+      const b = req.body as { appliesTo: string[] };
+      await updateAddonTargets(db, code, b.appliesTo);
+      return { ok: true };
+    }
+  );
+
+  // ── Service areas (manager) ──────────────────────────────────────────
+  app.get(
+    "/admin/service-areas",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async () => ({ items: await listServiceAreasForManager(db) })
+  );
+
+  app.post(
+    "/admin/service-areas",
+    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: ServiceAreaBody } },
+    async (req, reply) => {
+      const b = req.body as Static<typeof ServiceAreaBody>;
+      const row = await createServiceArea(db, b);
+      void reply.status(201);
+      return row;
+    }
+  );
+
+  app.patch(
+    "/admin/service-areas/:id",
+    {
+      preHandler: guards.requirePermission("catalog:manage"),
+      schema: { body: Type.Partial(ServiceAreaBody, { additionalProperties: false }) }
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as Partial<Static<typeof ServiceAreaBody>>;
+      return patchServiceArea(db, id, b);
     }
   );
 
   app.delete(
-    "/admin/addons/:code",
+    "/admin/service-areas/:id",
     { preHandler: guards.requirePermission("catalog:manage") },
     async (req) => {
-      const { code } = req.params as { code: string };
-      return deleteAddon(db, code);
+      const { id } = req.params as { id: string };
+      await deleteServiceArea(db, id);
+      return { ok: true };
+    }
+  );
+
+  /** Link (assign/reassign) an existing authority account to this service area. */
+  app.patch(
+    "/admin/service-areas/:id/authority",
+    {
+      preHandler: guards.requirePermission("catalog:manage"),
+      schema: { body: ServiceAreaAuthorityBody }
+    },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as Static<typeof ServiceAreaAuthorityBody>;
+      return linkServiceAreaAuthority(db, id, b.authorityUserId);
     }
   );
 }

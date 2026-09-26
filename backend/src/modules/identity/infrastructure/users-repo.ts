@@ -2,7 +2,7 @@
  * Users & credentials repository (Drizzle). Only place that touches the
  * users/credentials tables.
  */
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { DbOrTx } from "../../../shared/db/unit-of-work.js";
 import { users, credentials, citizens, collectors, authorities, staffProfiles, type UserRow } from "../../../shared/db/schema.js";
 import type { Role } from "../domain/permissions.js";
@@ -235,6 +235,43 @@ export async function getServiceAreaForUser(
     .where(eq(authorities.userId, userId))
     .limit(1);
   return aRows[0]?.areaId ?? null;
+}
+
+/**
+ * Re-point an existing authority account at a different service area
+ * (used by manager service-area management to "link" an area to an
+ * authority account). Returns false if no authority profile exists for
+ * that user id.
+ */
+export async function updateAuthorityServiceArea(
+  db: DbOrTx,
+  authorityUserId: string,
+  serviceAreaId: string
+): Promise<boolean> {
+  const res = await db
+    .update(authorities)
+    .set({ serviceAreaId })
+    .where(eq(authorities.userId, authorityUserId))
+    .returning({ userId: authorities.userId });
+  return res.length > 0;
+}
+
+/** All authority accounts currently linked to any of the given service areas. */
+export async function listAuthoritiesForServiceAreas(
+  db: DbOrTx,
+  serviceAreaIds: string[]
+): Promise<{ userId: string; serviceAreaId: string; displayName: string; email: string }[]> {
+  if (serviceAreaIds.length === 0) return [];
+  return db
+    .select({
+      userId: authorities.userId,
+      serviceAreaId: authorities.serviceAreaId,
+      displayName: users.displayName,
+      email: users.email
+    })
+    .from(authorities)
+    .innerJoin(users, eq(users.id, authorities.userId))
+    .where(inArray(authorities.serviceAreaId, serviceAreaIds));
 }
 
 export async function countActiveUsersByRole(db: DbOrTx, role: Role): Promise<number> {
