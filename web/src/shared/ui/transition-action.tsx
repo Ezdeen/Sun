@@ -2,11 +2,11 @@
  * Shared request transition action — used by collector/authority/sorter.
  * Enforces NOTHING itself (backend is the enforcer); purely UX guidance.
  */
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../shared/api/client.js";
 import { ar } from "../../shared/i18n/ar.js";
-import { Alert, Button, Input } from "../../shared/ui/components.js";
+import { Alert, Button, Input, Select } from "../../shared/ui/components.js";
 import { LazyQrScanner } from "./lazy-qr-scanner.js";
 
 interface NextStepInfo {
@@ -14,6 +14,9 @@ interface NextStepInfo {
   roles: string[];
   requiresBarcode: boolean;
   assignsCollector: boolean;
+  /** Authority/manager MAY pick a specific collector here (direct dispatch)
+   *  instead of broadcasting to the area's shared pool. */
+  assignsCollectorOptional?: boolean;
 }
 
 const NEXT_LABELS: Record<string, string> = {
@@ -45,13 +48,30 @@ export function TransitionAction({
   const [barcode, setBarcode] = useState(initialBarcode ?? "");
   const [scanning, setScanning] = useState(false);
   const [reason, setReason] = useState("");
+  const [collectorUserId, setCollectorUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const showCollectorPicker = role === "authority" && Boolean(nextInfo.assignsCollectorOptional);
+
+  const authorityDash = useQuery({
+    queryKey: ["authority-dashboard"],
+    queryFn: async () =>
+      (await api.GET("/authority/dashboard")).data as unknown as
+        | { areaCollectors: { userId: string; displayName: string; activeLoad: number }[] }
+        | undefined,
+    enabled: showCollectorPicker
+  });
 
   const mutation = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
       const res = await api.POST("/requests/{id}/transitions", {
         params: { path: { id: requestId } },
-        body: { target: nextInfo.next as never, expectedVersion: version, ...body }
+        body: {
+          target: nextInfo.next as never,
+          expectedVersion: version,
+          ...(collectorUserId ? { collectorUserId } : {}),
+          ...body
+        }
       });
       if (!res.response.ok) {
         const data = res.data as { detail?: string; code?: string } | undefined;
@@ -112,6 +132,20 @@ export function TransitionAction({
       {role === "manager" ? (
         <Input label={`سبب التجاوز (${ar.reason})`} value={reason} onChange={(e) => setReason(e.target.value)} />
       ) : null}
+      {showCollectorPicker ? (
+        <Select
+          label="توجيه إلى"
+          value={collectorUserId}
+          onChange={(e) => setCollectorUserId(e.target.value)}
+        >
+          <option value="">— البركة المشتركة (أي جامع متاح في المنطقة) —</option>
+          {(authorityDash.data?.areaCollectors ?? []).map((c) => (
+            <option key={c.userId} value={c.userId}>
+              {c.displayName} — {c.activeLoad} طلب نشط حالياً
+            </option>
+          ))}
+        </Select>
+      ) : null}
       {error ? <Alert kind="error">{error}</Alert> : null}
       <Button
         disabled={mutation.isPending || (needsBarcode && barcode.trim().length < 5)}
@@ -122,7 +156,11 @@ export function TransitionAction({
           })
         }
       >
-        {mutation.isPending ? "…" : NEXT_LABELS[nextInfo.next]}
+        {mutation.isPending
+          ? "…"
+          : showCollectorPicker && collectorUserId
+            ? "توجيه مباشر للجامع المحدد"
+            : NEXT_LABELS[nextInfo.next]}
       </Button>
     </div>
   );
@@ -132,7 +170,10 @@ export function TransitionAction({
 export function nextStepFor(status: string): NextStepInfo {
   switch (status) {
     case "received":
-      return { next: "sent_to_collector", roles: ["authority", "manager"], requiresBarcode: false, assignsCollector: false };
+      return {
+        next: "sent_to_collector", roles: ["authority", "manager"], requiresBarcode: false,
+        assignsCollector: false, assignsCollectorOptional: true
+      };
     case "sent_to_collector":
       return { next: "on_the_way", roles: ["collector", "manager"], requiresBarcode: false, assignsCollector: true };
     case "on_the_way":

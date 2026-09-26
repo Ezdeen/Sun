@@ -25,6 +25,10 @@ export interface TransitionSpec {
   systemOnly?: boolean;
   /** Collector assignment happens here. */
   assignsCollector?: boolean;
+  /** Authority/manager MAY pre-assign a specific collector here instead of
+   *  broadcasting to the area's shared pool (direct dispatch). Optional —
+   *  omitting collectorUserId keeps today's broadcast behaviour. */
+  assignsCollectorOptional?: boolean;
   /** Barcode match against citizen QR is mandatory here. */
   requiresBarcode?: boolean;
   /** All request bags must be weighed & attached to a shipment here. */
@@ -32,7 +36,7 @@ export interface TransitionSpec {
 }
 
 export const TRANSITIONS: Readonly<Record<RequestStatus, TransitionSpec>> = {
-  received: { to: "sent_to_collector", roles: ["authority", "manager"] },
+  received: { to: "sent_to_collector", roles: ["authority", "manager"], assignsCollectorOptional: true },
   sent_to_collector: { to: "on_the_way", roles: ["collector", "manager"], assignsCollector: true },
   on_the_way: { to: "arrived", roles: ["collector", "manager"] },
   arrived: { to: "collected", roles: ["collector", "manager"], requiresBarcode: true },

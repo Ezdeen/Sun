@@ -133,7 +133,8 @@ export async function authorityDashboard(db: Db, serviceAreaId: string | null) {
       id: collectionRequests.id,
       requestNumber: collectionRequests.requestNumber,
       citizenName: users.displayName,
-      createdAt: collectionRequests.createdAt
+      createdAt: collectionRequests.createdAt,
+      version: collectionRequests.version
     })
     .from(collectionRequests)
     .leftJoin(users, eq(users.id, collectionRequests.citizenUserId))
@@ -144,11 +145,112 @@ export async function authorityDashboard(db: Db, serviceAreaId: string | null) {
     .orderBy(collectionRequests.createdAt)
     .limit(20);
 
+  // Collectors serving this area + their current active load, so the
+  // authority can pick wisely when dispatching directly to one of them.
+  const areaCollectors = serviceAreaId
+    ? (
+        await db.execute(sql`
+          SELECT u.id, u.display_name,
+            count(r.id) FILTER (WHERE r.status IN ('sent_to_collector','on_the_way','arrived'))::int AS active_load
+          FROM app.collectors c
+          JOIN app.users u ON u.id = c.user_id AND u.status = 'active'
+          LEFT JOIN app.collection_requests r
+            ON r.collector_user_id = u.id AND r.status IN ('sent_to_collector','on_the_way','arrived')
+          WHERE c.service_area_id = ${serviceAreaId}
+          GROUP BY u.id, u.display_name
+          ORDER BY active_load ASC, u.display_name ASC
+        `)
+      ).rows
+    : [];
+
+  // Waste inventory for the area: awaiting collection (estimated at request
+  // time) vs. actually collected & weighed (real scale weight).
+  let wasteInventory: {
+    wasteTypeCode: string;
+    nameAr: string;
+    unit: string;
+    pendingQuantity: string;
+    pendingWeightKg: string;
+    collectedBagCount: number;
+    collectedWeightKg: string;
+  }[] = [];
+  if (serviceAreaId) {
+    const pendingRows = (
+      await db.execute(sql`
+        SELECT ri.waste_type_code, wt.name_ar, wt.unit,
+          coalesce(sum(ri.quantity), 0)::text AS pending_quantity,
+          coalesce(sum(ri.weight_kg), 0)::text AS pending_weight_kg
+        FROM app.request_items ri
+        JOIN app.collection_requests r ON r.id = ri.request_id
+        JOIN app.waste_types wt ON wt.code = ri.waste_type_code
+        WHERE r.service_area_id = ${serviceAreaId}
+          AND r.status IN ('received', 'sent_to_collector', 'on_the_way', 'arrived')
+        GROUP BY ri.waste_type_code, wt.name_ar, wt.unit
+      `)
+    ).rows as {
+      waste_type_code: string;
+      name_ar: string;
+      unit: string;
+      pending_quantity: string;
+      pending_weight_kg: string;
+    }[];
+
+    const collectedRows = (
+      await db.execute(sql`
+        SELECT b.waste_type_code, wt.name_ar, wt.unit,
+          count(*)::int AS bag_count,
+          coalesce(sum(b.final_weight_kg), 0)::text AS actual_weight_kg
+        FROM app.shipment_bags b
+        JOIN app.collection_requests r ON r.id = b.request_id
+        JOIN app.waste_types wt ON wt.code = b.waste_type_code
+        WHERE r.service_area_id = ${serviceAreaId} AND b.status = 'weighed'
+        GROUP BY b.waste_type_code, wt.name_ar, wt.unit
+      `)
+    ).rows as { waste_type_code: string; name_ar: string; unit: string; bag_count: number; actual_weight_kg: string }[];
+
+    const byCode = new Map<string, (typeof wasteInventory)[number]>();
+    for (const r of pendingRows) {
+      byCode.set(r.waste_type_code, {
+        wasteTypeCode: r.waste_type_code,
+        nameAr: r.name_ar,
+        unit: r.unit,
+        pendingQuantity: r.pending_quantity,
+        pendingWeightKg: r.pending_weight_kg,
+        collectedBagCount: 0,
+        collectedWeightKg: "0"
+      });
+    }
+    for (const r of collectedRows) {
+      const existing = byCode.get(r.waste_type_code);
+      if (existing) {
+        existing.collectedBagCount = r.bag_count;
+        existing.collectedWeightKg = r.actual_weight_kg;
+      } else {
+        byCode.set(r.waste_type_code, {
+          wasteTypeCode: r.waste_type_code,
+          nameAr: r.name_ar,
+          unit: r.unit,
+          pendingQuantity: "0",
+          pendingWeightKg: "0",
+          collectedBagCount: r.bag_count,
+          collectedWeightKg: r.actual_weight_kg
+        });
+      }
+    }
+    wasteInventory = Array.from(byCode.values()).sort((a, b) => a.nameAr.localeCompare(b.nameAr, "ar"));
+  }
+
   return {
     role: "authority",
     serviceAreaId,
     statusCounts,
     needsDispatch,
+    areaCollectors: (areaCollectors as { id: string; display_name: string; active_load: number }[]).map((c) => ({
+      userId: c.id,
+      displayName: c.display_name,
+      activeLoad: c.active_load
+    })),
+    wasteInventory,
     inFlight: (statusRows.rows as { status: string; count: number }[])
       .filter((r) => ["sent_to_collector", "on_the_way", "arrived"].includes(r.status))
       .reduce((acc, r) => acc + r.count, 0)

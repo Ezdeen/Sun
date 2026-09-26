@@ -9,11 +9,11 @@
  *   - optimistic versioning (409 concurrent_update)
  *   - tracking event appended in the SAME transaction
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client.js";
 import type { Clock } from "../../../shared/clock.js";
 import { DomainError } from "../../../shared/errors.js";
-import { users as usersTable } from "../../../shared/db/schema.js";
+import { users as usersTable, collectors as collectorsTable } from "../../../shared/db/schema.js";
 import { createHash } from "node:crypto";
 import {
   evaluateTransition,
@@ -145,6 +145,37 @@ export async function transitionRequest(deps: { db: Db; clock: Clock }, input: T
       }
       if (input.scheduledDay !== undefined) scheduledDay = input.scheduledDay ?? null;
       if (input.scheduledHour !== undefined) scheduledHour = input.scheduledHour ?? null;
+    }
+
+    // 5b) Optional direct dispatch at "received" — authority/manager MAY
+    // pre-assign a specific collector for this area instead of broadcasting
+    // to the area's shared pool. Omitting collectorUserId keeps the
+    // existing broadcast behaviour unchanged.
+    if (spec.assignsCollectorOptional && input.collectorUserId) {
+      const collectorRows = await tx
+        .select({ serviceAreaId: collectorsTable.serviceAreaId, status: usersTable.status })
+        .from(collectorsTable)
+        .innerJoin(usersTable, eq(usersTable.id, collectorsTable.userId))
+        .where(and(eq(collectorsTable.userId, input.collectorUserId)))
+        .limit(1);
+      const collectorRow = collectorRows[0];
+      if (!collectorRow || collectorRow.status !== "active") {
+        throw new DomainError(
+          "validation_error",
+          "collectorUserId is not a valid active collector account",
+          400,
+          { field: "collectorUserId" }
+        );
+      }
+      if (collectorRow.serviceAreaId !== request.serviceAreaId) {
+        throw new DomainError(
+          "validation_error",
+          "collector does not belong to this request's service area",
+          400,
+          { field: "collectorUserId" }
+        );
+      }
+      collectorUserId = input.collectorUserId;
     }
 
     // 6) Barcode match guard (override does NOT bypass this — §6.2).
