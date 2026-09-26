@@ -7,10 +7,13 @@ import type { Db } from "../../../shared/db/client.js";
 import type { AuthGuards } from "../../../shared/http/middleware.js";
 import {
   readPublicCatalog,
+  readManagedWasteTypes,
   createWasteType,
   patchWasteType,
+  deleteWasteType,
   createAddon,
-  updateAddonTargets,
+  patchAddon,
+  deleteAddon,
   listServiceAreasForManager,
   createServiceArea,
   patchServiceArea,
@@ -55,12 +58,25 @@ const AddonBody = Type.Object({
   appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
 });
 
+const AddonPatchBody = Type.Object({
+  nameAr: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
+  nameEn: Type.Optional(Type.String({ minLength: 2, maxLength: 80 })),
+  bonusPercent: Type.Optional(Type.String({ pattern: "^\\d+(\\.\\d{1,2})?$" })),
+  appliesTo: Type.Optional(Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 }))
+}, { additionalProperties: false });
+
 export function registerCatalogRoutes(
   app: FastifyInstance,
   db: Db,
   guards: AuthGuards
 ): void {
   app.get("/catalog", async () => readPublicCatalog(db));
+
+  app.get(
+    "/admin/waste-types",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async () => readManagedWasteTypes(db)
+  );
 
   app.post(
     "/admin/waste-types",
@@ -86,6 +102,12 @@ export function registerCatalogRoutes(
     }
   );
 
+  app.delete(
+    "/admin/waste-types/:code",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async (req) => deleteWasteType(db, (req.params as { code: string }).code)
+  );
+
   app.post(
     "/admin/addons",
     { preHandler: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
@@ -100,17 +122,19 @@ export function registerCatalogRoutes(
     {
       preHandler: guards.requirePermission("catalog:manage"),
       schema: {
-        body: Type.Object({
-          appliesTo: Type.Array(Type.String({ maxLength: 32 }), { minItems: 1, maxItems: 50 })
-        })
+        body: AddonPatchBody
       }
     },
     async (req) => {
       const { code } = req.params as { code: string };
-      const b = req.body as { appliesTo: string[] };
-      await updateAddonTargets(db, code, b.appliesTo);
-      return { ok: true };
+      return patchAddon(db, code, req.body as Static<typeof AddonPatchBody>);
     }
+  );
+
+  app.delete(
+    "/admin/addons/:code",
+    { preHandler: guards.requirePermission("catalog:manage") },
+    async (req) => deleteAddon(db, (req.params as { code: string }).code)
   );
 
   // ── Service areas (manager) ──────────────────────────────────────────

@@ -10,6 +10,7 @@ import {
   listActiveWasteTypes,
   listActiveAddonsWithTargets,
   listActiveServiceAreas,
+  listAllWasteTypes,
   listAllServiceAreas,
   getServiceAreaById,
   insertServiceArea,
@@ -18,6 +19,7 @@ import {
   updateWasteType,
   insertAddon,
   setAddonTargets,
+  updateAddon,
   listAllAddonsWithTargets
 } from "../infrastructure/catalog-repo.js";
 import {
@@ -58,6 +60,23 @@ export async function readPublicCatalog(db: Db) {
       code: a.code,
       nameAr: a.nameAr,
       zone: a.zone
+    }))
+  };
+}
+
+/** Manager view includes inactive catalog entries for administration. */
+export async function readManagedWasteTypes(db: Db) {
+  const [types, addons] = await Promise.all([listAllWasteTypes(db), listAllAddonsWithTargets(db)]);
+  return {
+    wasteTypes: types.map((t) => ({
+      code: t.code, category: t.category, nameAr: t.nameAr, nameEn: t.nameEn,
+      unit: t.unit, pricePerUnit: t.pricePerUnit, capacityWeightKg: t.capacityWeightKg,
+      minWeightKg: t.minWeightKg, isBulkOnly: t.isBulkOnly, displayOrder: t.displayOrder,
+      referencePricePerTon: t.referencePricePerTon, active: t.active
+    })),
+    addons: addons.map((a) => ({
+      code: a.code, nameAr: a.nameAr, nameEn: a.nameEn, bonusPercent: a.bonusPercent,
+      appliesTo: a.appliesTo, active: a.active
     }))
   };
 }
@@ -108,6 +127,11 @@ export async function patchWasteType(
   return row;
 }
 
+/** Soft delete preserves request and invoice history. */
+export async function deleteWasteType(db: Db, code: string) {
+  return patchWasteType(db, code, { active: false });
+}
+
 export async function createAddon(
   db: Db,
   input: { code: string; nameAr: string; nameEn: string; bonusPercent: string; appliesTo: string[] }
@@ -134,6 +158,29 @@ export async function updateAddonTargets(db: Db, addonCode: string, codes: strin
   const found = addons.find((a) => a.code === addonCode);
   if (!found) throw new DomainError("not_found", `addon ${addonCode} not found`, 404);
   await setAddonTargets(db, addonCode, codes);
+}
+
+export interface AddonPatchInput {
+  nameAr?: string;
+  nameEn?: string;
+  bonusPercent?: string;
+  appliesTo?: string[];
+  active?: boolean;
+}
+
+export async function patchAddon(db: Db, code: string, patch: AddonPatchInput) {
+  return db.transaction(async (tx) => {
+    const { appliesTo, ...addonPatch } = patch;
+    const row = await updateAddon(tx, code, addonPatch);
+    if (!row) throw new DomainError("not_found", `addon ${code} not found`, 404);
+    if (appliesTo) await setAddonTargets(tx, code, appliesTo);
+    return row;
+  });
+}
+
+/** Soft delete preserves pricing snapshots and historical request records. */
+export async function deleteAddon(db: Db, code: string) {
+  return patchAddon(db, code, { active: false });
 }
 
 // ── Service areas (manager CRUD + authority linking) ─────────────────────

@@ -135,6 +135,15 @@ export async function setAddonTargets(db: DbOrTx, addonCode: string, codes: stri
   }
 }
 
+export async function updateAddon(
+  db: DbOrTx,
+  code: string,
+  patch: Partial<typeof priceAddons.$inferInsert>
+) {
+  const [row] = await db.update(priceAddons).set(patch).where(eq(priceAddons.code, code)).returning();
+  return row;
+}
+
 export async function countCatalogItems(db: DbOrTx) {
   const [t] = await db.select({ c: sql<number>`count(*)::int` }).from(wasteTypes);
   const [a] = await db.select({ c: sql<number>`count(*)::int` }).from(priceAddons);
