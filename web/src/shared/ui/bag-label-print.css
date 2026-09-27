@@ -1,0 +1,61 @@
+/*
+ * Thermal-label print styles for BagLabelPrintSheet.
+ * On screen the whole sheet is invisible (it exists only to be printed);
+ * on print, every OTHER element on the page is hidden and only the label
+ * sheet is shown, sized for a common 50×30mm thermal label roll.
+ */
+.bag-label-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: 50mm 30mm;
+    margin: 2mm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .bag-label-print,
+  .bag-label-print * {
+    visibility: visible;
+  }
+
+  .bag-label-print {
+    display: block;
+    position: absolute;
+    inset: 0;
+  }
+
+  .bag-label {
+    width: 46mm;
+    height: 26mm;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1mm;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .bag-label:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .bag-label-code {
+    font-family: "Courier New", monospace;
+    font-size: 8pt;
+    letter-spacing: 0.2pt;
+    direction: ltr;
+  }
+
+  .bag-label-ref {
+    font-family: system-ui, sans-serif;
+    font-size: 6.5pt;
+    color: #000;
+  }
+}

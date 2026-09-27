@@ -203,7 +203,7 @@ export async function authorityDashboard(db: Db, serviceAreaId: string | null) {
         FROM app.shipment_bags b
         JOIN app.collection_requests r ON r.id = b.request_id
         JOIN app.waste_types wt ON wt.code = b.waste_type_code
-        WHERE r.service_area_id = ${serviceAreaId} AND b.status = 'weighed'
+        WHERE r.service_area_id = ${serviceAreaId} AND b.final_weight_kg IS NOT NULL
         GROUP BY b.waste_type_code, wt.name_ar, wt.unit
       `)
     ).rows as { waste_type_code: string; name_ar: string; unit: string; bag_count: number; actual_weight_kg: string }[];
@@ -278,6 +278,9 @@ export async function sorterDashboard(db: Db) {
     (bagCounts.rows as { status: string; count: number }[]).map((r) => [r.status, r.count])
   );
 
+  // In the sorter's active pipeline: collected (in transit to sorting),
+  // arrived (checked in, awaiting weigh), weighed (awaiting shipment
+  // placement). "attached" bags are done and no longer need attention here.
   const arrivedBags = await db
     .select({
       id: shipmentBags.id,
@@ -287,10 +290,12 @@ export async function sorterDashboard(db: Db) {
       shipmentId: shipmentBags.shipmentId
     })
     .from(shipmentBags)
-    .where(inArray(shipmentBags.status, ["collected", "attached"]))
+    .where(inArray(shipmentBags.status, ["collected", "arrived", "weighed"]))
     .orderBy(desc(shipmentBags.updatedAt))
     .limit(15);
 
+  // Recently weighed — kept regardless of later "attached" placement so the
+  // sorter's activity log doesn't empty out the moment a bag is filed.
   const recentWeighsRows = await db
     .select({
       bagCode: shipmentBags.bagCode,
@@ -298,7 +303,7 @@ export async function sorterDashboard(db: Db) {
       weighedAt: shipmentBags.weighedAt
     })
     .from(shipmentBags)
-    .where(eq(shipmentBags.status, "weighed"))
+    .where(sql`${shipmentBags.weighedAt} IS NOT NULL`)
     .orderBy(desc(shipmentBags.weighedAt))
     .limit(10);
 

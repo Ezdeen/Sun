@@ -1,18 +1,30 @@
 /**
- * Logistics use cases — create shipment, attach bag (explicit!), weigh bag.
- * All are single-transaction with row locks and chain events.
+ * Logistics use cases — create shipment, register bag arrival, weigh bag,
+ * attach bag (explicit!). All are single-transaction with row locks and
+ * chain events.
+ *
+ * Sorting pipeline (§5.11 / ASSUMPTIONS A-011), in order:
+ *   1) registerBagArrival — scan the bag QR at the sorting facility,
+ *      matching it against an expected (collected) bag. This is the
+ *      "أكياس واصلة" check-in, tracked independently of any shipment.
+ *   2) weighBag — confirm the waste type and record a locked-in weight
+ *      from the scale.
+ *   3) attachBag — place the now-weighed bag into its destination
+ *      shipment/batch.
  */
 import type { Db } from "../../../shared/db/client.js";
 import type { Clock } from "../../../shared/clock.js";
 import { DomainError } from "../../../shared/errors.js";
 import { createHash } from "node:crypto";
 import { uuidv7 } from "../../../shared/ids.js";
+import { evaluateBagTransition, bagGuardFor, type BagStatus } from "../domain/bag-lifecycle.js";
 import {
   lockShipment,
   lockBagByCode,
   nextShipmentNumber,
   insertShipment,
   attachBagToShipment,
+  recordBagArrival,
   recordBagWeight,
   getBagByCode
 } from "../infrastructure/shipments-repo.js";
@@ -57,7 +69,139 @@ export async function createShipment(
   });
 }
 
-/** Explicit bag→shipment binding. NO implicit "last open shipment" magic (§5.11). */
+/** Step 1 — arrival check-in at the sorting facility (§5.11). Reads the bag
+ *  QR and matches it against an expected (already-collected) bag; this is
+ *  what turns "أكياس واصلة" into a tracked, auditable event on its own,
+ *  independent from weighing or shipment placement. */
+export async function registerBagArrival(
+  deps: { db: Db; clock: Clock },
+  input: { bagCode: string; actor: { userId: string; role: "sorter" | "manager" } }
+) {
+  const { db, clock } = deps;
+  const now = clock.now();
+
+  return db.transaction(async (tx) => {
+    const bag = await lockBagByCode(tx, input.bagCode);
+    if (!bag) throw new DomainError("not_found", "bag not found", 404);
+
+    const decision = evaluateBagTransition(bag.status as BagStatus, "arrived");
+    if (!decision.ok) {
+      throw new DomainError(
+        "bag_state_invalid",
+        bag.status === "arrived"
+          ? "bag already checked in as arrived"
+          : `bag is ${bag.status}; ${bagGuardFor(bag.status as BagStatus).requires}`,
+        409,
+        { bagStatus: bag.status }
+      );
+    }
+
+    await recordBagArrival(tx, { bagId: bag.id, arrivedBy: input.actor.userId });
+    await appendEvent(tx, {
+      aggregateType: "bag",
+      aggregateId: bag.id,
+      statusCode: "arrived",
+      actorRole: input.actor.role,
+      actorRef: actorRefFor(input.actor.role, input.actor.userId),
+      payload: { request_id: bag.requestId, waste_type_code: bag.wasteTypeCode },
+      occurredAt: now
+    });
+    return {
+      bagId: bag.id,
+      bagCode: bag.bagCode,
+      requestId: bag.requestId,
+      wasteTypeCode: bag.wasteTypeCode,
+      status: "arrived"
+    };
+  });
+}
+
+/**
+ * Step 2 — weigh a bag. Verify FIRST, then mutate (§5.11):
+ *   1. bag must already be checked in (`arrived`) — cannot weigh a bag
+ *      that hasn't been scanned in at sorting, and cannot re-weigh one
+ *      already weighed.
+ *   2. the sorter confirms the waste type against what the scale/eye
+ *      observes; a mismatch is recorded for traceability/audit only —
+ *      it never re-prices the citizen's original estimate.
+ *   3. the weight itself is the value the caller has already locked in
+ *      client-side (UI requires an explicit "confirm" tap after the
+ *      scale reading appears, before this call is ever made).
+ */
+export async function weighBag(
+  deps: { db: Db; clock: Clock },
+  input: {
+    bagCode: string;
+    finalWeightKg: string;
+    /** Waste type as physically confirmed by the sorter. Defaults to the
+     *  bag's declared type (simple confirmation, no mismatch). */
+    observedWasteTypeCode?: string | null;
+    mismatchNote?: string | null;
+    actor: { userId: string; role: "sorter" | "manager" };
+  }
+) {
+  const { db, clock } = deps;
+  const now = clock.now();
+  const weight = Number.parseFloat(input.finalWeightKg);
+  if (!Number.isFinite(weight) || weight <= 0 || weight > 10_000) {
+    throw new DomainError("validation_error", "final weight must be in (0, 10000] kg", 400);
+  }
+
+  return db.transaction(async (tx) => {
+    const bag = await lockBagByCode(tx, input.bagCode);
+    if (!bag) throw new DomainError("not_found", "bag not found", 404);
+
+    const decision = evaluateBagTransition(bag.status as BagStatus, "weighed");
+    if (!decision.ok) {
+      throw new DomainError(
+        "bag_state_invalid",
+        bag.status === "weighed"
+          ? "bag already weighed"
+          : `bag is ${bag.status}; ${bagGuardFor(bag.status as BagStatus).requires}`,
+        409,
+        { bagStatus: bag.status }
+      );
+    }
+
+    const observedWasteTypeCode = input.observedWasteTypeCode?.trim() || bag.wasteTypeCode;
+    const wasteTypeMismatch = observedWasteTypeCode !== bag.wasteTypeCode;
+
+    await recordBagWeight(tx, {
+      bagId: bag.id,
+      finalWeightKg: weight.toFixed(3),
+      weighedBy: input.actor.userId,
+      observedWasteTypeCode,
+      wasteTypeMismatch,
+      mismatchNote: wasteTypeMismatch ? (input.mismatchNote?.trim() || null) : null
+    });
+    await appendEvent(tx, {
+      aggregateType: "bag",
+      aggregateId: bag.id,
+      statusCode: "weighed",
+      actorRole: input.actor.role,
+      actorRef: actorRefFor(input.actor.role, input.actor.userId),
+      payload: {
+        final_weight_kg: weight.toFixed(3),
+        declared_waste_type_code: bag.wasteTypeCode,
+        observed_waste_type_code: observedWasteTypeCode,
+        waste_type_mismatch: wasteTypeMismatch,
+        ...(wasteTypeMismatch && input.mismatchNote ? { mismatch_note: input.mismatchNote.trim() } : {})
+      },
+      occurredAt: now
+    });
+    return {
+      bagId: bag.id,
+      bagCode: bag.bagCode,
+      finalWeightKg: weight.toFixed(3),
+      observedWasteTypeCode,
+      wasteTypeMismatch,
+      status: "weighed"
+    };
+  });
+}
+
+/** Step 3 — explicit bag→shipment binding. NO implicit "last open shipment"
+ *  magic (§5.11). Only a weighed bag may be placed into its batch. */
 export async function attachBag(
   deps: { db: Db; clock: Clock },
   input: { shipmentId: string; bagCode: string; actor: { userId: string; role: "sorter" | "manager" } }
@@ -74,10 +218,14 @@ export async function attachBag(
 
     const bag = await lockBagByCode(tx, input.bagCode);
     if (!bag) throw new DomainError("not_found", "bag not found", 404);
-    if (bag.status !== "collected") {
+
+    const decision = evaluateBagTransition(bag.status as BagStatus, "attached");
+    if (!decision.ok) {
       throw new DomainError(
         "bag_state_invalid",
-        `bag is ${bag.status}, must be collected`,
+        bag.status === "attached"
+          ? "bag already attached to a shipment"
+          : `bag is ${bag.status}; ${bagGuardFor(bag.status as BagStatus).requires}`,
         409,
         { bagStatus: bag.status }
       );
@@ -97,63 +245,6 @@ export async function attachBag(
       occurredAt: now
     });
     return { bagId: bag.id, bagCode: bag.bagCode, shipmentId: shipment.id, status: "attached" };
-  });
-}
-
-/** Weigh a bag — verify FIRST, then mutate (§5.11). */
-export async function weighBag(
-  deps: { db: Db; clock: Clock },
-  input: {
-    bagCode: string;
-    finalWeightKg: string;
-    actor: { userId: string; role: "sorter" | "manager" };
-  }
-) {
-  const { db, clock } = deps;
-  const now = clock.now();
-  const weight = Number.parseFloat(input.finalWeightKg);
-  if (!Number.isFinite(weight) || weight <= 0 || weight > 10_000) {
-    throw new DomainError("validation_error", "final weight must be in (0, 10000] kg", 400);
-  }
-
-  return db.transaction(async (tx) => {
-    const bag = await lockBagByCode(tx, input.bagCode);
-    if (!bag) throw new DomainError("not_found", "bag not found", 404);
-    if (bag.status === "pending_collection" || bag.status === "collected") {
-      throw new DomainError(
-        "bag_state_invalid",
-        "bag must be attached to a shipment before weighing",
-        409,
-        { bagStatus: bag.status }
-      );
-    }
-    if (bag.status === "weighed") {
-      throw new DomainError("bag_state_invalid", "bag already weighed", 409);
-    }
-    if (!bag.shipmentId) {
-      throw new DomainError("bag_state_invalid", "bag has no shipment", 409);
-    }
-
-    await recordBagWeight(tx, {
-      bagId: bag.id,
-      finalWeightKg: weight.toFixed(3),
-      weighedBy: input.actor.userId
-    });
-    await appendEvent(tx, {
-      aggregateType: "bag",
-      aggregateId: bag.id,
-      statusCode: "weighed",
-      actorRole: input.actor.role,
-      actorRef: actorRefFor(input.actor.role, input.actor.userId),
-      payload: { final_weight_kg: weight.toFixed(3), shipment_id: bag.shipmentId },
-      occurredAt: now
-    });
-    return {
-      bagId: bag.id,
-      bagCode: bag.bagCode,
-      finalWeightKg: weight.toFixed(3),
-      status: "weighed"
-    };
   });
 }
 

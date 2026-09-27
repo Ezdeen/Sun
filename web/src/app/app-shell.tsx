@@ -46,8 +46,7 @@ const NAV: Record<Role, NavItem[]> = {
   sorter: [
     { to: "/sorter", label: ar.dashboard, end: true },
     { to: "/sorter/shipments", label: ar.shipments },
-    { to: "/sorter/bags", label: ar.bags },
-    { to: "/sorter/weights", label: "تسجيل الأوزان" }
+    { to: "/sorter/weights", label: "محطة الفرز" }
   ],
   finance: [
     { to: "/finance", label: ar.dashboard, end: true },

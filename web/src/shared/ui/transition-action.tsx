@@ -8,6 +8,8 @@ import { api } from "../../shared/api/client.js";
 import { ar } from "../../shared/i18n/ar.js";
 import { Alert, Button, Input, Select } from "../../shared/ui/components.js";
 import { LazyQrScanner } from "./lazy-qr-scanner.js";
+import { BagPrintPrompt } from "./bag-print-prompt.js";
+import type { PrintableBag } from "./bag-label-print.js";
 
 interface NextStepInfo {
   next: string | null;
@@ -50,6 +52,10 @@ export function TransitionAction({
   const [reason, setReason] = useState("");
   const [collectorUserId, setCollectorUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Shown once, right after the collector confirms "تم الجمع" — see
+   *  BagPrintPrompt. Pure transient state: never persisted, never re-shown
+   *  on reload, which is exactly what makes it "مرة واحدة". */
+  const [printableBags, setPrintableBags] = useState<PrintableBag[] | null>(null);
 
   const showCollectorPicker = role === "authority" && Boolean(nextInfo.assignsCollectorOptional);
 
@@ -79,7 +85,7 @@ export function TransitionAction({
       }
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       setError(null);
       setBarcode("");
       void qc.invalidateQueries({ queryKey: ["request", requestId] });
@@ -87,9 +93,27 @@ export function TransitionAction({
       void qc.invalidateQueries({ queryKey: ["collector-schedule"] });
       void qc.invalidateQueries({ queryKey: ["collector-dashboard"] });
       void qc.invalidateQueries({ queryKey: ["authority-dashboard"] });
+
+      // One-time print prompt: collector just confirmed "تم الجمع" — offer
+      // printing each bag's QR for the thermal label right away.
+      if (role === "collector" && nextInfo.next === "collected") {
+        const detail = await api.GET("/requests/{id}", { params: { path: { id: requestId } } });
+        const bags = (detail.data as unknown as { bags?: PrintableBag[] } | undefined)?.bags ?? [];
+        if (bags.length > 0) setPrintableBags(bags);
+      }
     },
     onError: (err) => setError(err.message)
   });
+
+  if (printableBags) {
+    return (
+      <BagPrintPrompt
+        bags={printableBags}
+        requestRef={requestId.slice(0, 8)}
+        onDismiss={() => setPrintableBags(null)}
+      />
+    );
+  }
 
   if (currentStatus === "sold") {
     return <div className="text-sm text-stone-400">اكتملت دورة الطلب بالبيع.</div>;

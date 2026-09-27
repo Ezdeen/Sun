@@ -49,11 +49,22 @@ export const requestStatusEnum = app.enum("request_status", [
   "sorted",
   "sold"
 ]);
+/**
+ * Bag lifecycle (§6.2 / logistics/domain/bag-lifecycle.ts):
+ *   pending_collection → collected → arrived → weighed → attached
+ * "arrived" = scanned in at the sorting facility (arrival check-in,
+ * matched against the collector's delivery) — added so a bag's physical
+ * hand-off to sorting is itself a tracked, auditable event, independent
+ * from which shipment/batch it is later placed into.
+ * "attached" is now the terminal state (placed in its destination
+ * shipment) and only reachable AFTER weighing — see ASSUMPTIONS A-011.
+ */
 export const bagStatusEnum = app.enum("bag_status", [
   "pending_collection",
   "collected",
-  "attached",
-  "weighed"
+  "arrived",
+  "weighed",
+  "attached"
 ]);
 export const shipmentStatusEnum = app.enum("shipment_status", ["open", "sold", "void"]);
 export const invoiceStatusEnum = app.enum("invoice_status", ["active", "void"]);
@@ -401,9 +412,21 @@ export const shipmentBags = app.table(
       .references(() => wasteTypes.code),
     status: bagStatusEnum("status").notNull().default("pending_collection"),
     shipmentId: uuid("shipment_id"),
+    /** Sorting-facility arrival check-in (§5.11 sorter recipe). */
+    arrivedAt: timestamp("arrived_at", { withTimezone: true }),
+    arrivedBy: uuid("arrived_by").references(() => users.id, { onDelete: "set null" }),
     finalWeightKg: numeric("final_weight_kg", { precision: 10, scale: 3 }),
     weighedAt: timestamp("weighed_at", { withTimezone: true }),
     weighedBy: uuid("weighed_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * Waste type as physically confirmed by the sorter at weigh time.
+     * Null = not yet confirmed. When it differs from wasteTypeCode
+     * (the citizen's original declaration), wasteTypeMismatch is set —
+     * informational/traceability only, never re-prices the request.
+     */
+    observedWasteTypeCode: text("observed_waste_type_code").references(() => wasteTypes.code),
+    wasteTypeMismatch: boolean("waste_type_mismatch").notNull().default(false),
+    mismatchNote: text("mismatch_note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },

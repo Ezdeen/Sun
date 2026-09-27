@@ -119,6 +119,7 @@ export function registerCollectionRoutes(
       bags: detail.bags.map((b) => ({
         id: b.id,
         bagCode: b.bagCode,
+        qrPayload: b.qrPayload,
         status: b.status,
         wasteTypeCode: b.wasteTypeCode,
         shipmentId: b.shipmentId,

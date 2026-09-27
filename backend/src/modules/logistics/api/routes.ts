@@ -10,6 +10,7 @@ import { parsePageParams } from "../../../shared/http/pagination.js";
 import {
   createShipment,
   attachBag,
+  registerBagArrival,
   weighBag,
   findBag
 } from "../application/shipments.js";
@@ -32,7 +33,11 @@ const AttachBagBody = Type.Object({
 });
 
 const WeighBody = Type.Object({
-  finalWeightKg: Type.String({ pattern: "^\\d+(\\.\\d{1,3})?$" })
+  finalWeightKg: Type.String({ pattern: "^\\d+(\\.\\d{1,3})?$" }),
+  /** Waste type as physically confirmed by the sorter (defaults to the
+   *  bag's declared type — plain confirmation, no mismatch recorded). */
+  observedWasteTypeCode: Type.Optional(Type.String({ minLength: 2, maxLength: 32 })),
+  mismatchNote: Type.Optional(Type.String({ maxLength: 300 }))
 });
 
 export function registerLogisticsRoutes(
@@ -92,8 +97,11 @@ export function registerLogisticsRoutes(
         citizenUserId: bag.citizenUserId,
         collectorUserId,
         requestId: bag.requestId,
+        arrivedAt: bag.arrivedAt,
         finalWeightKg: bag.finalWeightKg,
-        weighedAt: bag.weighedAt
+        weighedAt: bag.weighedAt,
+        observedWasteTypeCode: bag.observedWasteTypeCode,
+        wasteTypeMismatch: bag.wasteTypeMismatch
       }))
     };
   });
@@ -121,16 +129,34 @@ export function registerLogisticsRoutes(
     return {
       id: bag.id,
       bagCode: bag.bagCode,
+      qrPayload: bag.qrPayload,
       status: bag.status,
       wasteTypeCode: bag.wasteTypeCode,
       requestId: bag.requestId,
       shipmentId: bag.shipmentId,
+      arrivedAt: bag.arrivedAt,
       finalWeightKg: bag.finalWeightKg,
       weighedAt: bag.weighedAt,
+      observedWasteTypeCode: bag.observedWasteTypeCode,
+      wasteTypeMismatch: bag.wasteTypeMismatch,
       citizenUserId: bag.citizenUserId
     };
   });
 
+  // Step 1 of sorting (§5.11): scan the bag QR and register its arrival at
+  // the sorting facility, matching it against an expected collected bag.
+  app.post("/bags/:qr/arrive", { preHandler: guards.requirePermission("bag:weigh") }, async (req) => {
+    const { qr } = req.params as { qr: string };
+    return registerBagArrival(deps, {
+      bagCode: qr,
+      actor: {
+        userId: req.authUser!.id,
+        role: req.authUser!.role === "manager" ? "manager" : "sorter"
+      }
+    });
+  });
+
+  // Step 2 of sorting: confirm waste type + record the locked-in weight.
   app.post(
     "/bags/:qr/weigh",
     { preHandler: guards.requirePermission("bag:weigh"), schema: { body: WeighBody } },
@@ -140,6 +166,8 @@ export function registerLogisticsRoutes(
       return weighBag(deps, {
         bagCode: qr,
         finalWeightKg: b.finalWeightKg,
+        observedWasteTypeCode: b.observedWasteTypeCode ?? null,
+        mismatchNote: b.mismatchNote ?? null,
         actor: {
           userId: req.authUser!.id,
           role: req.authUser!.role === "manager" ? "manager" : "sorter"

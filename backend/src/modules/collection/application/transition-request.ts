@@ -191,13 +191,17 @@ export async function transitionRequest(deps: { db: Db; clock: Clock }, input: T
       }
     }
 
-    // 7) All-bags-weighed guard before sorting.
+    // 7) All-bags-weighed-and-bound guard before sorting (§6.2: "sorted"
+    //    requires every bag weighed AND bound to a shipment). Under the
+    //    redesigned sorting pipeline (ASSUMPTIONS A-011) a bag only reaches
+    //    its terminal `attached` status once BOTH have happened, so a
+    //    single check on the terminal status captures the whole guard.
     if (spec.requiresWeighedBags) {
       const bags = await getRequestBags(tx, request.id);
       if (bags.length === 0) {
         throw new DomainError("weights_missing", "request has no bags", 409);
       }
-      const unweighed = bags.filter((b) => b.status !== "weighed");
+      const unweighed = bags.filter((b) => b.status !== "attached");
       if (unweighed.length > 0) {
         throw new DomainError(
           "weights_missing",

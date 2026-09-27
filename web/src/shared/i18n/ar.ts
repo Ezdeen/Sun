@@ -68,9 +68,10 @@ export const ar = {
   } as Record<string, string>,
   bagStatus: {
     pending_collection: "بانتظار الجمع",
-    collected: "تم الجمع",
-    attached: "مربوط بصفقة",
-    weighed: "موزون"
+    collected: "تم الجمع (بالطريق للفرز)",
+    arrived: "وصل للفرز (بانتظار الوزن)",
+    weighed: "موزون (بانتظار الصفقة)",
+    attached: "مربوط بصفقة"
   } as Record<string, string>,
   payoutStatus: {
     calculated: "محسوب",
@@ -97,6 +98,9 @@ export const ar = {
   shipmentNumber: "رقم الصفقة",
   bags: "الأكياس",
   bagCode: "رمز الكيس",
+  registerArrival: "تسجيل وصول الكيس",
+  confirmWasteType: "تأكيد نوع النفاية",
+  lockWeight: "تثبيت الوزن",
   attachBag: "ربط كيس",
   weighBag: "وزن الكيس",
   finalWeight: "الوزن النهائي (كجم)",

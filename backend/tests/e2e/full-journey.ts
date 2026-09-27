@@ -228,20 +228,30 @@ async function main(): Promise<void> {
   });
   check("stale version → 409 concurrent_update", stale.status === 409 && stale.json.code === "concurrent_update");
 
-  // ── 7. Sorter: shipment + bags + weights ──────────────────────────────
+  // ── 7. Sorter: arrival check-in → weigh (+type confirm) → shipment ─────
   console.log("\n[sorter journey]");
   const detail = await call(sorter, "GET", `/requests/${requestId}`);
   const bags: any[] = detail.json?.bags ?? [];
   check("request detail shows 2 bags (collected)", detail.status === 200 && bags.length === 2 && bags.every((b) => b.status === "collected"));
 
+  // Step 1: cannot weigh or attach before arrival check-in.
+  const weighBeforeArrival = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "3.500" });
+  check("weigh before arrival → 409 bag_state_invalid", weighBeforeArrival.status === 409 && weighBeforeArrival.json.code === "bag_state_invalid");
+
+  for (const bag of bags) {
+    const arr = await call(sorter, "POST", `/bags/${bag.bagCode}/arrive`, {});
+    check(`bag ${bag.bagCode.slice(0, 12)}… arrival check-in`, arr.status === 200 && arr.json.status === "arrived", arr.json);
+  }
+  const doubleArrival = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/arrive`, {});
+  check("re-scanning an already-arrived bag → 409", doubleArrival.status === 409 && doubleArrival.json.code === "bag_state_invalid");
+
   const ship = await call(sorter, "POST", "/shipments", { buyerName: "مصنع بلاستيك الوطن" });
   check("create shipment → open", ship.status === 200 && ship.json.status === "open", ship.json);
   const shipmentId: string = ship.json.id;
 
-  for (const bag of bags) {
-    const att = await call(sorter, "POST", `/shipments/${shipmentId}/bags`, { bagCode: bag.bagCode });
-    check(`attach bag ${bag.bagCode.slice(0, 12)}…`, att.status === 200 && att.json.status === "attached");
-  }
+  // Step 3 attempted before step 2: cannot attach a bag that isn't weighed yet.
+  const attachBeforeWeigh = await call(sorter, "POST", `/shipments/${shipmentId}/bags`, { bagCode: bags[0]!.bagCode });
+  check("attach before weighing → 409 bag_state_invalid", attachBeforeWeigh.status === 409 && attachBeforeWeigh.json.code === "bag_state_invalid");
 
   const earlySorted = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
     target: "sorted",
@@ -249,15 +259,37 @@ async function main(): Promise<void> {
   });
   check("sorted before weighing → 409 weights_missing", earlySorted.status === 409 && earlySorted.json.code === "weights_missing");
 
-  await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "3.500" });
-  const w2 = await call(sorter, "POST", `/bags/${bags[1]!.bagCode}/weigh`, { finalWeightKg: "1.250" });
-  check("both bags weighed", w2.status === 200 && w2.json.status === "weighed");
+  // Step 2: confirm waste type + record the locked-in weight from the scale.
+  const w1 = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "3.500" });
+  check("bag 1 weighed (type confirmed, no mismatch)", w1.status === 200 && w1.json.status === "weighed" && w1.json.wasteTypeMismatch === false, w1.json);
+
+  const w2 = await call(sorter, "POST", `/bags/${bags[1]!.bagCode}/weigh`, {
+    finalWeightKg: "1.250",
+    observedWasteTypeCode: bags[1]!.wasteTypeCode,
+    mismatchNote: "لا يوجد اختلاف"
+  });
+  check("bag 2 weighed (explicit type confirmation)", w2.status === 200 && w2.json.status === "weighed");
+
+  const reWeigh = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "9.999" });
+  check("re-weighing an already-weighed bag → 409", reWeigh.status === 409 && reWeigh.json.code === "bag_state_invalid");
+
+  const earlySorted2 = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
+    target: "sorted",
+    expectedVersion: 5
+  });
+  check("sorted before shipment placement → 409 weights_missing", earlySorted2.status === 409 && earlySorted2.json.code === "weights_missing");
+
+  // Step 3: place the now-weighed bags into their destination shipment/batch.
+  for (const bag of bags) {
+    const att = await call(sorter, "POST", `/shipments/${shipmentId}/bags`, { bagCode: bag.bagCode });
+    check(`attach (place in batch) bag ${bag.bagCode.slice(0, 12)}…`, att.status === 200 && att.json.status === "attached");
+  }
 
   const t5 = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
     target: "sorted",
     expectedVersion: 5
   });
-  check("sorter → sorted (all bags weighed)", t5.status === 200 && t5.json.status === "sorted", t5.json);
+  check("sorter → sorted (all bags weighed AND placed)", t5.status === 200 && t5.json.status === "sorted", t5.json);
 
   // ── 8. Finance: invoice + distribution + idempotency ──────────────────
   console.log("\n[finance journey]");

@@ -58,9 +58,32 @@ export async function attachBagToShipment(
     .where(eq(shipmentBags.id, input.bagId));
 }
 
+/** Sorting-facility arrival check-in — §5.11 sorter recipe, step 1. */
+export async function recordBagArrival(
+  tx: DbOrTx,
+  input: { bagId: string; arrivedBy: string }
+): Promise<void> {
+  await tx
+    .update(shipmentBags)
+    .set({
+      status: "arrived",
+      arrivedAt: new Date(),
+      arrivedBy: input.arrivedBy,
+      updatedAt: new Date()
+    })
+    .where(eq(shipmentBags.id, input.bagId));
+}
+
 export async function recordBagWeight(
   tx: DbOrTx,
-  input: { bagId: string; finalWeightKg: string; weighedBy: string }
+  input: {
+    bagId: string;
+    finalWeightKg: string;
+    weighedBy: string;
+    observedWasteTypeCode: string | null;
+    wasteTypeMismatch: boolean;
+    mismatchNote: string | null;
+  }
 ): Promise<void> {
   await tx
     .update(shipmentBags)
@@ -68,6 +91,9 @@ export async function recordBagWeight(
       finalWeightKg: input.finalWeightKg,
       weighedAt: new Date(),
       weighedBy: input.weighedBy,
+      observedWasteTypeCode: input.observedWasteTypeCode,
+      wasteTypeMismatch: input.wasteTypeMismatch,
+      mismatchNote: input.mismatchNote,
       status: "weighed",
       updatedAt: new Date()
     })
@@ -153,11 +179,14 @@ export async function countOpenBagsByStatus(db: DbOrTx) {
   return rows;
 }
 
+/** Recently weighed bags — regardless of whether they've since been placed
+ *  into a shipment (`attached`), so the sorter's activity log doesn't empty
+ *  out the moment a bag is filed into its batch. */
 export async function recentWeighs(db: DbOrTx, limit = 10) {
   return db
     .select()
     .from(shipmentBags)
-    .where(eq(shipmentBags.status, "weighed"))
+    .where(sql`${shipmentBags.weighedAt} IS NOT NULL`)
     .orderBy(desc(shipmentBags.weighedAt))
     .limit(limit);
 }

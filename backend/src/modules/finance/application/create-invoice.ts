@@ -82,12 +82,16 @@ export async function createInvoice(deps: { db: Db; clock: Clock }, input: Creat
       throw new DomainError("bag_state_invalid", `shipment is ${shipment.status}`, 409);
     }
 
-    // 2) All bags must carry final weights (§6.4.4).
+    // 2) All bags must carry final weights (§6.4.4). Every bag returned by
+    //    bagsOfShipment is already `attached` by construction (that is what
+    //    put it in this shipment — see ASSUMPTIONS A-011, bag lifecycle:
+    //    weighed BEFORE attached), so the weight itself is the only real
+    //    signal left to check here.
     const bags = await bagsOfShipment(tx, shipment.id);
     if (bags.length === 0) {
       throw new DomainError("weights_missing", "shipment has no bags", 409);
     }
-    const unweighed = bags.filter((b) => b.bag.finalWeightKg === null || b.bag.status !== "weighed");
+    const unweighed = bags.filter((b) => b.bag.finalWeightKg === null);
     if (unweighed.length > 0) {
       throw new DomainError(
         "weights_missing",

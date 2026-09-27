@@ -192,6 +192,11 @@ export async function listLedger(
 
 /** Bags with their collector (via request) for distribution weights. */
 export async function distributionWeights(db: DbOrTx, shipmentId: string) {
+  // Every bag returned here is already `attached` by construction (that is
+  // what places it in this shipment — bag lifecycle: weighed BEFORE
+  // attached, see ASSUMPTIONS A-011), so filtering by shipment_id alone is
+  // both necessary and sufficient; a status filter here would (and did)
+  // silently exclude every bag once the pipeline was reordered.
   const res = await db.execute(sql`
     SELECT
       b.citizen_user_id AS citizen_user_id,
@@ -199,7 +204,7 @@ export async function distributionWeights(db: DbOrTx, shipmentId: string) {
       b.final_weight_kg::text AS final_weight_kg
     FROM app.shipment_bags b
     JOIN app.collection_requests r ON r.id = b.request_id
-    WHERE b.shipment_id = ${shipmentId} AND b.status = 'weighed'
+    WHERE b.shipment_id = ${shipmentId} AND b.final_weight_kg IS NOT NULL
   `);
   return res.rows as { citizen_user_id: string; collector_user_id: string | null; final_weight_kg: string }[];
 }
