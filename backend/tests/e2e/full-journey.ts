@@ -233,24 +233,35 @@ async function main(): Promise<void> {
   const detail = await call(sorter, "GET", `/requests/${requestId}`);
   const bags: any[] = detail.json?.bags ?? [];
   check("request detail shows 2 bags (collected)", detail.status === 200 && bags.length === 2 && bags.every((b) => b.status === "collected"));
+  const petBag = bags.find((b) => b.wasteTypeCode === "PET_2L");
+  const hdpeBag = bags.find((b) => b.wasteTypeCode === "HDPE");
+  check("bags cover both declared materials (PET_2L + HDPE)", !!petBag && !!hdpeBag, bags.map((b: any) => b.wasteTypeCode));
 
   // Step 1: cannot weigh or attach before arrival check-in.
-  const weighBeforeArrival = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "3.500" });
+  const weighBeforeArrival = await call(sorter, "POST", `/bags/${petBag.bagCode}/weigh`, { finalWeightKg: "3.500" });
   check("weigh before arrival → 409 bag_state_invalid", weighBeforeArrival.status === 409 && weighBeforeArrival.json.code === "bag_state_invalid");
 
   for (const bag of bags) {
     const arr = await call(sorter, "POST", `/bags/${bag.bagCode}/arrive`, {});
     check(`bag ${bag.bagCode.slice(0, 12)}… arrival check-in`, arr.status === 200 && arr.json.status === "arrived", arr.json);
   }
-  const doubleArrival = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/arrive`, {});
+  const doubleArrival = await call(sorter, "POST", `/bags/${petBag.bagCode}/arrive`, {});
   check("re-scanning an already-arrived bag → 409", doubleArrival.status === 409 && doubleArrival.json.code === "bag_state_invalid");
 
-  const ship = await call(sorter, "POST", "/shipments", { buyerName: "مصنع بلاستيك الوطن" });
-  check("create shipment → open", ship.status === 200 && ship.json.status === "open", ship.json);
-  const shipmentId: string = ship.json.id;
+  const noType = await call(sorter, "POST", "/shipments", { buyerName: "بلا نوع" });
+  check("shipment without wasteTypeCode → 400 validation_error", noType.status === 400, noType.json);
+
+  // Two shipments — one per material — since a batch is homogeneous by type.
+  const ship1 = await call(sorter, "POST", "/shipments", { buyerName: "مصنع بلاستيك الوطن", wasteTypeCode: "PET_2L" });
+  check("create PET shipment → open, default target = 1 ton", ship1.status === 200 && ship1.json.status === "open" && ship1.json.targetWeightKg === "1000.000", ship1.json);
+  const ship1Id: string = ship1.json.id;
+
+  const ship2 = await call(sorter, "POST", "/shipments", { buyerName: "مصنع كرتون الشام", wasteTypeCode: "HDPE" });
+  check("create HDPE shipment → open", ship2.status === 200 && ship2.json.status === "open", ship2.json);
+  const ship2Id: string = ship2.json.id;
 
   // Step 3 attempted before step 2: cannot attach a bag that isn't weighed yet.
-  const attachBeforeWeigh = await call(sorter, "POST", `/shipments/${shipmentId}/bags`, { bagCode: bags[0]!.bagCode });
+  const attachBeforeWeigh = await call(sorter, "POST", `/shipments/${ship1Id}/bags`, { bagCode: petBag.bagCode });
   check("attach before weighing → 409 bag_state_invalid", attachBeforeWeigh.status === 409 && attachBeforeWeigh.json.code === "bag_state_invalid");
 
   const earlySorted = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
@@ -260,17 +271,17 @@ async function main(): Promise<void> {
   check("sorted before weighing → 409 weights_missing", earlySorted.status === 409 && earlySorted.json.code === "weights_missing");
 
   // Step 2: confirm waste type + record the locked-in weight from the scale.
-  const w1 = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "3.500" });
-  check("bag 1 weighed (type confirmed, no mismatch)", w1.status === 200 && w1.json.status === "weighed" && w1.json.wasteTypeMismatch === false, w1.json);
+  const w1 = await call(sorter, "POST", `/bags/${petBag.bagCode}/weigh`, { finalWeightKg: "3.500" });
+  check("PET bag weighed (type confirmed, no mismatch)", w1.status === 200 && w1.json.status === "weighed" && w1.json.wasteTypeMismatch === false, w1.json);
 
-  const w2 = await call(sorter, "POST", `/bags/${bags[1]!.bagCode}/weigh`, {
-    finalWeightKg: "1.250",
-    observedWasteTypeCode: bags[1]!.wasteTypeCode,
+  const w2 = await call(sorter, "POST", `/bags/${hdpeBag.bagCode}/weigh`, {
+    finalWeightKg: "2.500",
+    observedWasteTypeCode: hdpeBag.wasteTypeCode,
     mismatchNote: "لا يوجد اختلاف"
   });
-  check("bag 2 weighed (explicit type confirmation)", w2.status === 200 && w2.json.status === "weighed");
+  check("HDPE bag weighed (explicit type confirmation)", w2.status === 200 && w2.json.status === "weighed");
 
-  const reWeigh = await call(sorter, "POST", `/bags/${bags[0]!.bagCode}/weigh`, { finalWeightKg: "9.999" });
+  const reWeigh = await call(sorter, "POST", `/bags/${petBag.bagCode}/weigh`, { finalWeightKg: "9.999" });
   check("re-weighing an already-weighed bag → 409", reWeigh.status === 409 && reWeigh.json.code === "bag_state_invalid");
 
   const earlySorted2 = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
@@ -279,11 +290,36 @@ async function main(): Promise<void> {
   });
   check("sorted before shipment placement → 409 weights_missing", earlySorted2.status === 409 && earlySorted2.json.code === "weights_missing");
 
-  // Step 3: place the now-weighed bags into their destination shipment/batch.
-  for (const bag of bags) {
-    const att = await call(sorter, "POST", `/shipments/${shipmentId}/bags`, { bagCode: bag.bagCode });
-    check(`attach (place in batch) bag ${bag.bagCode.slice(0, 12)}…`, att.status === 200 && att.json.status === "attached");
-  }
+  // Cross-type attach must be rejected — a batch is homogeneous by material.
+  const crossType = await call(sorter, "POST", `/shipments/${ship1Id}/bags`, { bagCode: hdpeBag.bagCode });
+  check("attaching HDPE bag to a PET shipment → 409 (waste type mismatch)", crossType.status === 409 && crossType.json.code === "bag_state_invalid", crossType.json);
+
+  // Capacity guard — a throwaway 1kg-target shipment cannot accept a 3.5kg bag.
+  const tinyShip = await call(sorter, "POST", "/shipments", { buyerName: "اختبار السعة", wasteTypeCode: "PET_2L", targetWeightKg: "1.000" });
+  check("tiny shipment created with target 1.000", tinyShip.status === 200 && tinyShip.json.targetWeightKg === "1.000", tinyShip.json);
+  const overCapacity = await call(sorter, "POST", `/shipments/${tinyShip.json.id}/bags`, { bagCode: petBag.bagCode });
+  check(
+    "attaching a 3.5kg bag to a 1kg-target shipment → 409 shipment_capacity_exceeded",
+    overCapacity.status === 409 && overCapacity.json.code === "shipment_capacity_exceeded" && overCapacity.json.errors?.remainingWeightKg === "1.000",
+    overCapacity.json
+  );
+
+  // Step 3: place each now-weighed bag into its matching shipment/batch.
+  const att1 = await call(sorter, "POST", `/shipments/${ship1Id}/bags`, { bagCode: petBag.bagCode });
+  check(
+    "attach PET bag → remaining capacity auto-updates (1000 - 3.5 = 996.5)",
+    att1.status === 200 && att1.json.status === "attached" && att1.json.remainingWeightKg === "996.500",
+    att1.json
+  );
+  const att2 = await call(sorter, "POST", `/shipments/${ship2Id}/bags`, { bagCode: hdpeBag.bagCode });
+  check("attach HDPE bag → placed in its own shipment", att2.status === 200 && att2.json.status === "attached", att2.json);
+
+  const ship1Detail = await call(sorter, "GET", `/shipments/${ship1Id}`);
+  check(
+    "shipment detail exposes live attached/remaining weight",
+    ship1Detail.json?.shipment?.attachedWeightKg === "3.500" && ship1Detail.json?.shipment?.remainingWeightKg === "996.500",
+    ship1Detail.json?.shipment
+  );
 
   const t5 = await call(sorter, "POST", `/requests/${requestId}/transitions`, {
     target: "sorted",
@@ -291,49 +327,55 @@ async function main(): Promise<void> {
   });
   check("sorter → sorted (all bags weighed AND placed)", t5.status === 200 && t5.json.status === "sorted", t5.json);
 
-  // ── 8. Finance: invoice + distribution + idempotency ──────────────────
+  // ── 8. Finance: invoice both shipments + distribution + idempotency ───
   console.log("\n[finance journey]");
   const finDash = await call(finance, "GET", "/finance/dashboard");
-  check("finance dashboard → ready-to-invoice shipment", finDash.status === 200 && finDash.json.readyToInvoice.length >= 1);
+  check("finance dashboard → ready-to-invoice shipments", finDash.status === 200 && finDash.json.readyToInvoice.length >= 2, finDash.json?.readyToInvoice?.length);
 
   const IDEM = "e2e-invoice-key-1";
-  const inv = await call(finance, "POST", "/invoices", { shipmentId, amount: "500.00" }, { idempotencyKey: IDEM });
-  check("create invoice → 201-ish", inv.status === 200 || inv.status === 201, inv.json);
+  const inv = await call(finance, "POST", "/invoices", { shipmentId: ship1Id, amount: "500.00" }, { idempotencyKey: IDEM });
+  check("create invoice (PET shipment) → 201-ish", inv.status === 200 || inv.status === 201, inv.json);
   const invoiceId: string = inv.json?.invoiceId;
 
-  const inv2 = await call(finance, "POST", "/invoices", { shipmentId, amount: "500.00" }, { idempotencyKey: IDEM });
+  const inv2 = await call(finance, "POST", "/invoices", { shipmentId: ship1Id, amount: "500.00" }, { idempotencyKey: IDEM });
   check("idempotent replay → same invoice id", inv2.status === (inv.status) && inv2.json?.invoiceId === invoiceId, inv2.json?.invoiceId);
 
-  const inv3 = await call(finance, "POST", "/invoices", { shipmentId, amount: "999.00" });
+  const inv3 = await call(finance, "POST", "/invoices", { shipmentId: ship1Id, amount: "999.00" });
   check("duplicate invoice (no key) → 409 duplicate_invoice", inv3.status === 409 && inv3.json?.code === "duplicate_invoice", inv3.json);
 
-  // Money conservation via SQL.
+  // Second (HDPE) shipment still needs its own invoice before the request as
+  // a whole can become "sold" (A-007: sold only once EVERY bag's shipment
+  // has been invoiced).
+  const invHdpe = await call(finance, "POST", "/invoices", { shipmentId: ship2Id, amount: "500.00" });
+  check("create invoice (HDPE shipment) → 201-ish", invHdpe.status === 200 || invHdpe.status === 201, invHdpe.json);
+  const invoiceId2: string = invHdpe.json?.invoiceId;
+
+  // Money conservation via SQL, across both invoices.
   const db = getDb(settings.databaseUrl);
   const money = await db.execute(sql`
     SELECT
-      i.amount::text AS invoice_amount,
-      (SELECT coalesce(sum(p.amount),0)::text FROM app.payouts p WHERE p.invoice_id = i.id AND p.status <> 'void') AS payouts_sum,
-      (SELECT count(*)::int FROM app.payouts p WHERE p.invoice_id = i.id) AS payout_count
-    FROM app.sales_invoices i WHERE i.id = ${invoiceId}
+      (SELECT sum(amount)::text FROM app.sales_invoices WHERE id IN (${invoiceId}, ${invoiceId2})) AS invoice_amount,
+      (SELECT coalesce(sum(p.amount),0)::text FROM app.payouts p WHERE p.invoice_id IN (${invoiceId}, ${invoiceId2}) AND p.status <> 'void') AS payouts_sum,
+      (SELECT count(*)::int FROM app.payouts p WHERE p.invoice_id IN (${invoiceId}, ${invoiceId2})) AS payout_count
   `);
   const m = money.rows[0] as { invoice_amount: string; payouts_sum: string; payout_count: number };
-  check(`Σ payouts == invoice amount (${m.payouts_sum} == ${m.invoice_amount})`, m.payouts_sum === m.invoice_amount);
-  check("distribution produced >= 3 payouts", m.payout_count >= 3, m.payout_count);
+  check(`Σ payouts == Σ invoice amounts (${m.payouts_sum} == ${m.invoice_amount})`, m.payouts_sum === m.invoice_amount);
+  check("distribution across both invoices produced >= 6 payouts", m.payout_count >= 6, m.payout_count);
 
-  // Platform 30% = 150 ; collectors 40% = 200 ; citizens 30% = 150
+  // Platform 30% = 300 ; collectors 40% = 400 ; citizens 30% = 300 (of 1000 total)
   const pools = await db.execute(sql`
     SELECT p.beneficiary_type, sum(p.amount)::text AS total
-    FROM app.payouts p WHERE p.invoice_id = ${invoiceId} AND p.status <> 'void'
+    FROM app.payouts p WHERE p.invoice_id IN (${invoiceId}, ${invoiceId2}) AND p.status <> 'void'
     GROUP BY p.beneficiary_type
   `);
   const poolMap: Record<string, string> = {};
   for (const r of pools.rows as { beneficiary_type: string; total: string }[]) poolMap[r.beneficiary_type] = r.total;
-  check("platform pool = 150.00", poolMap["platform"] === "150.00", poolMap);
-  check("collectors pool = 200.00", poolMap["collector"] === "200.00");
-  check("citizens pool = 150.00", poolMap["citizen"] === "150.00");
+  check("platform pool = 300.00", poolMap["platform"] === "300.00", poolMap);
+  check("collectors pool = 400.00", poolMap["collector"] === "400.00");
+  check("citizens pool = 300.00", poolMap["citizen"] === "300.00");
 
   const reqAfter = await call(citizen, "GET", `/requests/${requestId}`);
-  check("request auto-advanced to sold by invoice", reqAfter.json?.request?.status === "sold", reqAfter.json?.request?.status);
+  check("request auto-advanced to sold once both shipments invoiced", reqAfter.json?.request?.status === "sold", reqAfter.json?.request?.status);
 
   // ── 9. Citizen payout + public tracking ───────────────────────────────
   console.log("\n[citizen payouts + public track]");
@@ -468,7 +510,7 @@ async function main(): Promise<void> {
   `);
   check(
     "ledger allocations == invoice amount",
-    (ledgerSum.rows[0] as { total: string }).total === "500.00",
+    (ledgerSum.rows[0] as { total: string }).total === "1000.00",
     (ledgerSum.rows[0] as { total: string }).total
   );
 

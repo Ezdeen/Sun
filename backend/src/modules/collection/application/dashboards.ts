@@ -9,7 +9,6 @@ import {
   payouts,
   salesInvoices,
   shipmentBags,
-  shipments,
   users,
   serviceAreas,
   trackingEvents
@@ -259,17 +258,40 @@ export async function authorityDashboard(db: Db, serviceAreaId: string | null) {
 
 // ── Sorter ───────────────────────────────────────────────────────────────
 export async function sorterDashboard(db: Db) {
-  const openShipments = await db
-    .select({
-      id: shipments.id,
-      shipmentNumber: shipments.shipmentNumber,
-      openedAt: shipments.openedAt,
-      buyerName: shipments.buyerName
-    })
-    .from(shipments)
-    .where(eq(shipments.status, "open"))
-    .orderBy(desc(shipments.openedAt))
-    .limit(10);
+  // Open shipments with live remaining capacity (target − attached weight)
+  // — this is the number that must auto-update for the supervisor as bags
+  // get attached (§new capacity feature / ASSUMPTIONS A-018).
+  const openShipmentsRes = await db.execute(sql`
+    SELECT
+      s.id,
+      s.shipment_number AS "shipmentNumber",
+      s.opened_at AS "openedAt",
+      s.buyer_name AS "buyerName",
+      s.waste_type_code AS "wasteTypeCode",
+      s.target_weight_kg AS "targetWeightKg",
+      COALESCE(b.attached_kg, 0)::text AS "attachedWeightKg",
+      (s.target_weight_kg - COALESCE(b.attached_kg, 0))::text AS "remainingWeightKg"
+    FROM app.shipments s
+    LEFT JOIN (
+      SELECT shipment_id, SUM(final_weight_kg) AS attached_kg
+      FROM app.shipment_bags
+      WHERE shipment_id IS NOT NULL
+      GROUP BY shipment_id
+    ) b ON b.shipment_id = s.id
+    WHERE s.status = 'open'
+    ORDER BY s.opened_at DESC
+    LIMIT 10
+  `);
+  const openShipments = openShipmentsRes.rows as {
+    id: string;
+    shipmentNumber: number;
+    openedAt: string;
+    buyerName: string | null;
+    wasteTypeCode: string | null;
+    targetWeightKg: string;
+    attachedWeightKg: string;
+    remainingWeightKg: string;
+  }[];
 
   const bagCounts = await db.execute(sql`
     SELECT status, count(*)::int AS count FROM app.shipment_bags GROUP BY status

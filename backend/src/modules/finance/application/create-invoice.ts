@@ -30,7 +30,7 @@ import {
   insertOutboxEvent,
   distributionWeights
 } from "../infrastructure/finance-repo.js";
-import { lockShipment, markShipmentSold, bagsOfShipment, requestIdsOfShipmentBags, countBagsPerRequest } from "../../logistics/infrastructure/shipments-repo.js";
+import { lockShipment, markShipmentSold, bagsOfShipment, requestIdsOfShipmentBags, fullySoldRequestIds } from "../../logistics/infrastructure/shipments-repo.js";
 import { markRequestsSold } from "../../collection/infrastructure/requests-repo.js";
 
 export interface CreateInvoiceInput {
@@ -210,16 +210,15 @@ export async function createInvoice(deps: { db: Db; clock: Clock }, input: Creat
       occurredAt: now
     });
 
-    // 8) Requests → sold (only requests whose ALL bags are in this shipment —
-    //    requests with bags in other shipments stay `sorted`, see ASSUMPTIONS).
+    // 8) Requests → sold. A request is fully sold only once EVERY one of its
+    //    bags sits in a shipment that has itself been invoiced (`sold`) —
+    //    not just this one. A mixed-material request routinely spans more
+    //    than one shipment now (§new capacity feature); see ASSUMPTIONS
+    //    A-018 and fullySoldRequestIds' own doc comment.
     const requestIds = await requestIdsOfShipmentBags(tx, shipment.id);
-    const bagsPerRequest = await countBagsPerRequest(tx, requestIds);
-    const fullySoldRequestIds = requestIds.filter((rid) => {
-      const info = bagsPerRequest.get(rid);
-      return info !== undefined && info.total === (info.inShipment.get(shipment.id) ?? 0);
-    });
-    await markRequestsSold(tx, fullySoldRequestIds);
-    for (const rid of fullySoldRequestIds) {
+    const fullySold = await fullySoldRequestIds(tx, requestIds);
+    await markRequestsSold(tx, fullySold);
+    for (const rid of fullySold) {
       await appendEvent(tx, {
         aggregateType: "request",
         aggregateId: rid,

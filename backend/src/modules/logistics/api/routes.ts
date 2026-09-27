@@ -14,7 +14,7 @@ import {
   weighBag,
   findBag
 } from "../application/shipments.js";
-import { listShipments, getShipment, bagsOfShipment } from "../infrastructure/shipments-repo.js";
+import { listShipments, getShipment, bagsOfShipment, attachedWeightByShipment } from "../infrastructure/shipments-repo.js";
 import { DomainError } from "../../../shared/errors.js";
 
 const PageQuery = Type.Object({
@@ -25,6 +25,10 @@ const PageQuery = Type.Object({
 
 const CreateShipmentBody = Type.Object({
   buyerName: Type.Optional(Type.String({ maxLength: 120 })),
+  /** Material type collected in this batch — taken from the waste catalog. */
+  wasteTypeCode: Type.String({ minLength: 2, maxLength: 32 }),
+  /** Batch target weight in kg. Defaults to 1 ton (1000 kg) when omitted. */
+  targetWeightKg: Type.Optional(Type.String({ pattern: "^\\d+(\\.\\d{1,3})?$" })),
   notes: Type.Optional(Type.String({ maxLength: 500 }))
 });
 
@@ -54,6 +58,8 @@ export function registerLogisticsRoutes(
         createdBy: req.authUser!.id,
         role: req.authUser!.role === "manager" ? "manager" : "sorter",
         buyerName: b.buyerName ?? null,
+        wasteTypeCode: b.wasteTypeCode,
+        targetWeightKg: b.targetWeightKg ?? null,
         notes: b.notes ?? null
       });
     }
@@ -67,15 +73,24 @@ export function registerLogisticsRoutes(
         ? (q["status"] as "open" | "sold" | "void")
         : undefined;
     const result = await listShipments(deps.db, { limit: p.pageSize, offset: p.offset }, { status });
+    const attachedByShipment = await attachedWeightByShipment(deps.db, result.items.map((s) => s.id));
     return {
-      items: result.items.map((s) => ({
-        id: s.id,
-        shipmentNumber: s.shipmentNumber,
-        status: s.status,
-        buyerName: s.buyerName,
-        openedAt: s.openedAt,
-        soldAt: s.soldAt
-      })),
+      items: result.items.map((s) => {
+        const attachedWeightKg = attachedByShipment.get(s.id) ?? "0";
+        const remainingWeightKg = (Number.parseFloat(s.targetWeightKg) - Number.parseFloat(attachedWeightKg)).toFixed(3);
+        return {
+          id: s.id,
+          shipmentNumber: s.shipmentNumber,
+          status: s.status,
+          buyerName: s.buyerName,
+          wasteTypeCode: s.wasteTypeCode,
+          targetWeightKg: s.targetWeightKg,
+          attachedWeightKg,
+          remainingWeightKg,
+          openedAt: s.openedAt,
+          soldAt: s.soldAt
+        };
+      }),
       page: p.page,
       pageSize: p.pageSize,
       total: result.total
@@ -87,8 +102,10 @@ export function registerLogisticsRoutes(
     const shipment = await getShipment(deps.db, id);
     if (!shipment) throw new DomainError("not_found", "shipment not found", 404);
     const bags = await bagsOfShipment(deps.db, id);
+    const attachedWeightKg = await attachedWeightByShipment(deps.db, [id]).then((m) => m.get(id) ?? "0");
+    const remainingWeightKg = (Number.parseFloat(shipment.targetWeightKg) - Number.parseFloat(attachedWeightKg)).toFixed(3);
     return {
-      shipment,
+      shipment: { ...shipment, attachedWeightKg, remainingWeightKg },
       bags: bags.map(({ bag, collectorUserId }) => ({
         id: bag.id,
         bagCode: bag.bagCode,

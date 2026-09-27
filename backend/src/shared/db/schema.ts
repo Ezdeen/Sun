@@ -475,6 +475,15 @@ export const shipments = app.table(
       .notNull()
       .references(() => users.id),
     buyerName: text("buyer_name"),
+    /** Material type collected in this batch, taken from the waste catalog
+     *  (§ new sorter capacity feature). Nullable at the DB level only to
+     *  avoid a backfill migration for any pre-existing rows — the
+     *  application layer requires it on every new shipment. */
+    wasteTypeCode: text("waste_type_code").references(() => wasteTypes.code),
+    /** Batch target weight — defaults to 1 metric ton (1000 kg) on every
+     *  new shipment. Bags may be attached until the accumulated weight of
+     *  attached bags reaches this target (see attachBag's capacity guard). */
+    targetWeightKg: numeric("target_weight_kg", { precision: 10, scale: 3 }).notNull().default("1000.000"),
     notes: text("notes"),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
     soldAt: timestamp("sold_at", { withTimezone: true }),

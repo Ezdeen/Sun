@@ -26,6 +26,7 @@ export type DomainErrorCode =
   | "barcode_mismatch"
   | "bag_state_invalid"
   | "weights_missing"
+  | "shipment_capacity_exceeded"
   // finance
   | "duplicate_invoice"
   | "splits_must_sum_100"

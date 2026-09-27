@@ -1460,6 +1460,8 @@ export interface paths {
                 content: {
                     "application/json": {
                         buyerName?: string;
+                        wasteTypeCode: string;
+                        targetWeightKg?: string;
                         notes?: string;
                     };
                 };

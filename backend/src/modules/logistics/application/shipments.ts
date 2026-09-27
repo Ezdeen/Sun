@@ -26,9 +26,15 @@ import {
   attachBagToShipment,
   recordBagArrival,
   recordBagWeight,
-  getBagByCode
+  getBagByCode,
+  attachedWeightForShipment
 } from "../infrastructure/shipments-repo.js";
 import { appendEvent } from "../../traceability/infrastructure/chain-repo.js";
+import { getWasteType } from "../../catalog/infrastructure/catalog-repo.js";
+
+/** Every new shipment defaults to a 1 metric ton batch unless the sorter
+ *  overrides it explicitly — see ASSUMPTIONS A-018. */
+const DEFAULT_TARGET_WEIGHT_KG = "1000.000";
 
 const ACTOR_PREFIX = { sorter: "SRT", manager: "MGR", finance: "FIN" } as const;
 
@@ -37,13 +43,36 @@ function actorRefFor(role: "sorter" | "manager" | "finance", userId: string): st
   return `${ACTOR_PREFIX[role]}-${sha.slice(0, 48)}`;
 }
 
+/**
+ * Create a shipment/batch. The buyer name, the material type collected
+ * (taken from the waste catalog — §new sorter capacity feature) and the
+ * batch's target weight (defaults to 1 ton) are recorded up front, so the
+ * sorter's dashboard can show remaining capacity immediately.
+ */
 export async function createShipment(
   deps: { db: Db; clock: Clock },
-  input: { createdBy: string; role: "sorter" | "manager"; buyerName?: string | null; notes?: string | null }
+  input: {
+    createdBy: string;
+    role: "sorter" | "manager";
+    buyerName?: string | null;
+    wasteTypeCode: string;
+    targetWeightKg?: string | null;
+    notes?: string | null;
+  }
 ) {
   const { db, clock } = deps;
   const now = clock.now();
   const id = uuidv7();
+
+  const wasteType = await getWasteType(db, input.wasteTypeCode);
+  if (!wasteType || !wasteType.active) {
+    throw new DomainError("validation_error", "waste type not found or inactive", 400);
+  }
+  const targetWeightKg = input.targetWeightKg?.trim() || DEFAULT_TARGET_WEIGHT_KG;
+  const target = Number.parseFloat(targetWeightKg);
+  if (!Number.isFinite(target) || target <= 0) {
+    throw new DomainError("validation_error", "target weight must be a positive number", 400);
+  }
 
   return db.transaction(async (tx) => {
     const number = await nextShipmentNumber(tx);
@@ -53,6 +82,8 @@ export async function createShipment(
       status: "open",
       createdBy: input.createdBy,
       buyerName: input.buyerName ?? null,
+      wasteTypeCode: input.wasteTypeCode,
+      targetWeightKg: target.toFixed(3),
       notes: input.notes ?? null,
       openedAt: now
     });
@@ -62,10 +93,18 @@ export async function createShipment(
       statusCode: "open",
       actorRole: input.role,
       actorRef: actorRefFor(input.role, input.createdBy),
-      payload: { shipment_number: number },
+      payload: { shipment_number: number, waste_type_code: input.wasteTypeCode, target_weight_kg: target.toFixed(3) },
       occurredAt: now
     });
-    return { id: row.id, shipmentNumber: row.shipmentNumber, status: row.status, openedAt: row.openedAt };
+    return {
+      id: row.id,
+      shipmentNumber: row.shipmentNumber,
+      status: row.status,
+      wasteTypeCode: row.wasteTypeCode,
+      targetWeightKg: row.targetWeightKg,
+      remainingWeightKg: row.targetWeightKg,
+      openedAt: row.openedAt
+    };
   });
 }
 
@@ -201,7 +240,11 @@ export async function weighBag(
 }
 
 /** Step 3 — explicit bag→shipment binding. NO implicit "last open shipment"
- *  magic (§5.11). Only a weighed bag may be placed into its batch. */
+ *  magic (§5.11). Only a weighed bag may be placed into its batch, and only
+ *  if (a) its confirmed waste type matches this shipment's designated
+ *  material, and (b) the shipment still has capacity for its weight
+ *  (target weight − already-attached weight, §new capacity feature /
+ *  ASSUMPTIONS A-018). */
 export async function attachBag(
   deps: { db: Db; clock: Clock },
   input: { shipmentId: string; bagCode: string; actor: { userId: string; role: "sorter" | "manager" } }
@@ -234,6 +277,29 @@ export async function attachBag(
       throw new DomainError("bag_state_invalid", "bag already attached to a shipment", 409);
     }
 
+    const bagType = bag.observedWasteTypeCode ?? bag.wasteTypeCode;
+    if (shipment.wasteTypeCode && bagType !== shipment.wasteTypeCode) {
+      throw new DomainError(
+        "bag_state_invalid",
+        `bag waste type (${bagType}) does not match this shipment's material (${shipment.wasteTypeCode})`,
+        409,
+        { bagWasteType: bagType, shipmentWasteType: shipment.wasteTypeCode }
+      );
+    }
+
+    const bagWeight = Number.parseFloat(bag.finalWeightKg ?? "0");
+    const target = Number.parseFloat(shipment.targetWeightKg);
+    const attachedSoFar = Number.parseFloat(await attachedWeightForShipment(tx, shipment.id));
+    const remainingBefore = target - attachedSoFar;
+    if (bagWeight > remainingBefore) {
+      throw new DomainError(
+        "shipment_capacity_exceeded",
+        `shipment can only accept ${remainingBefore.toFixed(3)} kg more, bag weighs ${bagWeight.toFixed(3)} kg`,
+        409,
+        { remainingWeightKg: remainingBefore.toFixed(3), bagWeightKg: bagWeight.toFixed(3) }
+      );
+    }
+
     await attachBagToShipment(tx, { bagId: bag.id, shipmentId: shipment.id });
     await appendEvent(tx, {
       aggregateType: "bag",
@@ -241,10 +307,17 @@ export async function attachBag(
       statusCode: "attached",
       actorRole: input.actor.role,
       actorRef: actorRefFor(input.actor.role, input.actor.userId),
-      payload: { shipment_id: shipment.id, shipment_number: shipment.shipmentNumber },
+      payload: { shipment_id: shipment.id, shipment_number: shipment.shipmentNumber, final_weight_kg: bag.finalWeightKg },
       occurredAt: now
     });
-    return { bagId: bag.id, bagCode: bag.bagCode, shipmentId: shipment.id, status: "attached" };
+    const remainingAfter = remainingBefore - bagWeight;
+    return {
+      bagId: bag.id,
+      bagCode: bag.bagCode,
+      shipmentId: shipment.id,
+      status: "attached",
+      remainingWeightKg: remainingAfter.toFixed(3)
+    };
   });
 }
 

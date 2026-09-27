@@ -171,6 +171,47 @@ export async function countBagsPerRequest(db: DbOrTx, requestIds: string[]) {
   return map;
 }
 
+/**
+ * Which of these requests are now fully sold — EVERY bag of the request is
+ * attached to a shipment that has been invoiced (`status = 'sold'`), not
+ * merely bags within the ONE shipment just invoiced.
+ *
+ * A request's bags routinely spread across more than one shipment now that
+ * shipments are homogeneous by material (§new capacity feature): a mixed
+ * request (e.g. plastic + paper) always needs two shipments, invoiced on
+ * their own schedules. Checking membership in just the currently-invoiced
+ * shipment would (and did, before this fix) leave such requests stuck at
+ * `sorted` forever, even after every one of their bags had actually been
+ * sold — see ASSUMPTIONS A-018.
+ */
+export async function fullySoldRequestIds(db: DbOrTx, requestIds: string[]): Promise<string[]> {
+  if (requestIds.length === 0) return [];
+  const rows = await db
+    .select({
+      requestId: shipmentBags.requestId,
+      shipmentId: shipmentBags.shipmentId,
+      shipmentStatus: shipments.status
+    })
+    .from(shipmentBags)
+    .leftJoin(shipments, eq(shipments.id, shipmentBags.shipmentId))
+    .where(inArray(shipmentBags.requestId, requestIds));
+
+  const byRequest = new Map<string, { shipmentId: string | null; shipmentStatus: string | null }[]>();
+  for (const r of rows) {
+    const arr = byRequest.get(r.requestId) ?? [];
+    arr.push({ shipmentId: r.shipmentId, shipmentStatus: r.shipmentStatus ?? null });
+    byRequest.set(r.requestId, arr);
+  }
+
+  const out: string[] = [];
+  for (const [requestId, bags] of byRequest) {
+    if (bags.length > 0 && bags.every((b) => b.shipmentId !== null && b.shipmentStatus === "sold")) {
+      out.push(requestId);
+    }
+  }
+  return out;
+}
+
 export async function countOpenBagsByStatus(db: DbOrTx) {
   const rows = await db
     .select({ status: shipmentBags.status, count: sql<number>`count(*)::int` })
@@ -189,4 +230,31 @@ export async function recentWeighs(db: DbOrTx, limit = 10) {
     .where(sql`${shipmentBags.weighedAt} IS NOT NULL`)
     .orderBy(desc(shipmentBags.weighedAt))
     .limit(limit);
+}
+
+/**
+ * Sum of final weights already attached to each shipment — the "وزن داخل
+ * الصفقة" the capacity guard and the sorter's dashboard both read.
+ * Every bag with shipment_id set is `attached` by construction (see
+ * ASSUMPTIONS A-011/A-018), so a plain SUM grouped by shipment_id is exact.
+ */
+export async function attachedWeightByShipment(
+  db: DbOrTx,
+  shipmentIds: string[]
+): Promise<Map<string, string>> {
+  if (shipmentIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      shipmentId: shipmentBags.shipmentId,
+      attachedKg: sql<string>`COALESCE(SUM(${shipmentBags.finalWeightKg}), 0)::text`
+    })
+    .from(shipmentBags)
+    .where(inArray(shipmentBags.shipmentId, shipmentIds))
+    .groupBy(shipmentBags.shipmentId);
+  return new Map(rows.filter((r) => r.shipmentId !== null).map((r) => [r.shipmentId as string, r.attachedKg]));
+}
+
+export async function attachedWeightForShipment(db: DbOrTx, shipmentId: string): Promise<string> {
+  const map = await attachedWeightByShipment(db, [shipmentId]);
+  return map.get(shipmentId) ?? "0";
 }

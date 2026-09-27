@@ -1,0 +1,3 @@
+ALTER TABLE "app"."shipments" ADD COLUMN "waste_type_code" text;--> statement-breakpoint
+ALTER TABLE "app"."shipments" ADD COLUMN "target_weight_kg" numeric(10, 3) DEFAULT '1000.000' NOT NULL;--> statement-breakpoint
+ALTER TABLE "app"."shipments" ADD CONSTRAINT "shipments_waste_type_code_waste_types_code_fk" FOREIGN KEY ("waste_type_code") REFERENCES "app"."waste_types"("code") ON DELETE no action ON UPDATE no action;

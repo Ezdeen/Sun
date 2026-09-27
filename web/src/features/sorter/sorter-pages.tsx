@@ -15,7 +15,10 @@ import { formatDateTime, formatWeight } from "../../shared/lib/format.js";
 import { LazyQrScanner } from "../../shared/ui/lazy-qr-scanner.js";
 
 interface SorterDashboardData {
-  openShipments: { id: string; shipmentNumber: number; openedAt: string; buyerName: string | null }[];
+  openShipments: {
+    id: string; shipmentNumber: number; openedAt: string; buyerName: string | null;
+    wasteTypeCode: string | null; targetWeightKg: string; attachedWeightKg: string; remainingWeightKg: string;
+  }[];
   bagStatusCounts: Record<string, number>;
   arrivedBags: { id: string; bagCode: string; wasteTypeCode: string; status: string; shipmentId: string | null }[];
   recentWeighs: { bagCode: string; finalWeightKg: string | null; weighedAt: string | null }[];
@@ -24,6 +27,9 @@ interface SorterDashboardData {
 export function SorterDashboard(): React.ReactNode {
   const dash = useQuery({
     queryKey: ["sorter-dashboard"],
+    // Auto-refresh so the remaining-capacity numbers stay live even when
+    // another sorter (not this browser tab) is the one attaching bags.
+    refetchInterval: 10_000,
     queryFn: async () => (await api.GET("/sorter/dashboard")).data as unknown as SorterDashboardData | undefined
   });
   if (dash.isLoading) return <Loading />;
@@ -42,15 +48,31 @@ export function SorterDashboard(): React.ReactNode {
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <h2 className="mb-3 font-bold">{ar.shipments} المفتوحة</h2>
+          <h2 className="mb-3 font-bold">{ar.shipments} المفتوحة — السعة المتبقية</h2>
           {d.openShipments.length === 0 ? <EmptyState /> : (
             <ul className="space-y-2">
-              {d.openShipments.map((s) => (
-                <li key={s.id} className="flex items-center justify-between rounded-lg bg-stone-50 px-4 py-2 text-sm">
-                  <span className="font-semibold">صفقة #{s.shipmentNumber}{s.buyerName ? ` · ${s.buyerName}` : ""}</span>
-                  <Link className="text-brand-700 hover:underline" to={`/sorter/shipments/${s.id}`}>{ar.details} ←</Link>
-                </li>
-              ))}
+              {d.openShipments.map((s) => {
+                const remaining = Number.parseFloat(s.remainingWeightKg);
+                const target = Number.parseFloat(s.targetWeightKg);
+                const pct = target > 0 ? Math.min(100, Math.max(0, ((target - remaining) / target) * 100)) : 0;
+                return (
+                  <li key={s.id} className="rounded-lg bg-stone-50 px-4 py-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <Link className="font-semibold text-brand-700 hover:underline" to={`/sorter/shipments/${s.id}`}>
+                        صفقة #{s.shipmentNumber}{s.buyerName ? ` · ${s.buyerName}` : ""}
+                      </Link>
+                      <span className="text-xs text-stone-500">{s.wasteTypeCode ?? "—"}</span>
+                    </div>
+                    <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-stone-200">
+                      <div className="h-full bg-brand-600" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="mt-1 flex justify-between text-xs text-stone-500">
+                      <span>المتبقي: <strong dir="ltr">{formatWeight(s.remainingWeightKg)}</strong></span>
+                      <span>الهدف: <span dir="ltr">{formatWeight(s.targetWeightKg)}</span></span>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>
@@ -75,7 +97,11 @@ export function SorterDashboard(): React.ReactNode {
 }
 
 interface ShipmentsListData {
-  items: { id: string; shipmentNumber: number; status: string; buyerName: string | null; openedAt: string; soldAt: string | null }[];
+  items: {
+    id: string; shipmentNumber: number; status: string; buyerName: string | null;
+    wasteTypeCode: string | null; targetWeightKg: string; attachedWeightKg: string; remainingWeightKg: string;
+    openedAt: string; soldAt: string | null;
+  }[];
   total: number;
 }
 
@@ -91,12 +117,14 @@ export function SorterShipments(): React.ReactNode {
     <>
       <PageHeader title={ar.shipments} subtitle={`${list.data.total} ${ar.of}`}
         actions={<Link to="/sorter/shipments/new"><Button>＋ {ar.newShipment}</Button></Link>} />
-      <Table head={[ar.shipmentNumber, ar.buyer, ar.status, "تاريخ الفتح", ""]}>
+      <Table head={[ar.shipmentNumber, ar.buyer, ar.wasteTypes, ar.status, "المتبقي/الهدف (كجم)", "تاريخ الفتح", ""]}>
         {list.data.items.map((s) => (
           <tr key={s.id} className="hover:bg-stone-50">
             <Td className="font-semibold">#{s.shipmentNumber}</Td>
             <Td>{s.buyerName ?? "—"}</Td>
+            <Td>{s.wasteTypeCode ?? "—"}</Td>
             <Td><StatusBadge code={s.status} label={ar.shipmentStatus[s.status] ?? s.status} /></Td>
+            <Td dir="ltr" className="font-mono text-xs">{formatWeight(s.remainingWeightKg)} / {formatWeight(s.targetWeightKg)}</Td>
             <Td className="text-stone-500">{formatDateTime(s.openedAt)}</Td>
             <Td><Link className="text-brand-700 hover:underline" to={`/sorter/shipments/${s.id}`}>{ar.details}</Link></Td>
           </tr>
@@ -106,15 +134,33 @@ export function SorterShipments(): React.ReactNode {
   );
 }
 
+interface CatalogMini {
+  wasteTypes: { code: string; nameAr: string }[];
+}
+
 export function NewShipmentPage(): React.ReactNode {
   const [buyerName, setBuyerName] = useState("");
+  const [wasteTypeCode, setWasteTypeCode] = useState("");
+  const [targetWeightKg, setTargetWeightKg] = useState("1000");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const catalog = useQuery({
+    queryKey: ["catalog"],
+    queryFn: async () => (await api.GET("/catalog")).data as unknown as CatalogMini | undefined
+  });
+
   const mutation = useMutation({
     mutationFn: async () => {
+      if (!wasteTypeCode) throw new Error("اختر نوع المادة المجمَّعة من دليل النفايات");
       const res = await api.POST("/shipments", {
-        body: { buyerName: buyerName || undefined, notes: notes || undefined }
+        body: {
+          buyerName: buyerName || undefined,
+          wasteTypeCode,
+          targetWeightKg: targetWeightKg.trim() || undefined,
+          notes: notes || undefined
+        }
       });
       if (!res.response.ok) throw new Error((res.data as unknown as { detail?: string } | undefined)?.detail ?? "تعذر إنشاء الصفقة");
       return res.data as unknown as { id: string };
@@ -132,6 +178,21 @@ export function NewShipmentPage(): React.ReactNode {
       <Card className="mx-auto max-w-lg">
         <form onSubmit={submit} className="space-y-4">
           <Input label={ar.buyer} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} placeholder="اسم المشتري (اختياري)" />
+          <Select label="نوع المادة المجمَّعة (من دليل النفايات)" value={wasteTypeCode} onChange={(e) => setWasteTypeCode(e.target.value)} required>
+            <option value="">— اختر —</option>
+            {(catalog.data?.wasteTypes ?? []).map((wt) => (
+              <option key={wt.code} value={wt.code}>{wt.nameAr}</option>
+            ))}
+          </Select>
+          <Input
+            label="الوزن المستهدف للصفقة (كجم) — افتراضياً طن واحد"
+            type="number"
+            step="1"
+            min="1"
+            dir="ltr"
+            value={targetWeightKg}
+            onChange={(e) => setTargetWeightKg(e.target.value)}
+          />
           <Input label={ar.notes} value={notes} onChange={(e) => setNotes(e.target.value)} />
           {error ? <Alert kind="error">{error}</Alert> : null}
           <Button type="submit" disabled={mutation.isPending} className="w-full">
@@ -144,7 +205,10 @@ export function NewShipmentPage(): React.ReactNode {
 }
 
 interface ShipmentDetailData {
-  shipment: { id: string; shipmentNumber: number; status: string; buyerName: string | null; openedAt: string };
+  shipment: {
+    id: string; shipmentNumber: number; status: string; buyerName: string | null; openedAt: string;
+    wasteTypeCode: string | null; targetWeightKg: string; attachedWeightKg: string; remainingWeightKg: string;
+  };
   bags: {
     id: string; bagCode: string; status: string; wasteTypeCode: string;
     citizenUserId: string; collectorUserId: string | null;
@@ -165,6 +229,9 @@ export function ShipmentDetail(): React.ReactNode {
 
   const detail = useQuery({
     queryKey: ["shipment", id],
+    // Auto-refresh so "remaining capacity" stays live for the supervisor
+    // even if another sorter is the one attaching bags right now.
+    refetchInterval: 8_000,
     queryFn: async () => (await api.GET("/shipments/{id}", { params: { path: { id: id! } } })).data as unknown as ShipmentDetailData | undefined,
     enabled: !!id
   });
@@ -192,14 +259,39 @@ export function ShipmentDetail(): React.ReactNode {
   if (detail.isError || !detail.data) return <ErrorState />;
   const d = detail.data;
   const isOpen = d.shipment.status === "open";
+  const remaining = Number.parseFloat(d.shipment.remainingWeightKg);
+  const isFull = remaining <= 0;
 
   return (
     <>
       <PageHeader title={`صفقة #${d.shipment.shipmentNumber}`}
         subtitle={d.shipment.buyerName ?? undefined}
         actions={<Link to="/sorter/shipments"><span className="text-sm text-brand-700 hover:underline">{ar.back} ←</span></Link>} />
+      <Card className="mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <span className="text-xs text-stone-500">نوع المادة: </span>
+            <span className="font-semibold">{d.shipment.wasteTypeCode ?? "—"}</span>
+          </div>
+          <div className="flex-1 min-w-[160px]">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-stone-200">
+              <div
+                className={`h-full ${isFull ? "bg-red-500" : "bg-brand-600"}`}
+                style={{
+                  width: `${Math.min(100, Math.max(0, (Number.parseFloat(d.shipment.attachedWeightKg) / Number.parseFloat(d.shipment.targetWeightKg)) * 100))}%`
+                }}
+              />
+            </div>
+          </div>
+          <div dir="ltr" className="font-mono text-sm">
+            <strong className={isFull ? "text-red-600" : "text-emerald-700"}>{formatWeight(d.shipment.remainingWeightKg)}</strong>
+            {" "}متبقي / {formatWeight(d.shipment.targetWeightKg)} هدف
+          </div>
+        </div>
+        {isFull ? <p className="mt-2 text-xs text-red-600">اكتملت سعة هذه الصفقة — لا يمكن وضع أكياس إضافية فيها.</p> : null}
+      </Card>
       {error ? <div className="mb-4"><Alert kind="error">{error}</Alert></div> : null}
-      {isOpen ? (
+      {isOpen && !isFull ? (
         <Card className="mb-4">
           <h2 className="mb-3 font-bold">وضع كيس موزون في هذه الصفقة</h2>
           <form className="flex flex-wrap gap-3" onSubmit={(e) => { e.preventDefault(); attachMutation.mutate(); }}>
@@ -256,10 +348,6 @@ interface BagLookup {
   citizenUserId: string;
 }
 
-interface CatalogMini {
-  wasteTypes: { code: string; nameAr: string }[];
-}
-
 /**
  * THE SORTING STATION — one scan box, the whole pipeline (§5.11):
  *   1) status = collected  → register arrival (check-in)
@@ -305,7 +393,12 @@ export function WeightsPage(): React.ReactNode {
     queryKey: ["shipments-open-mini"],
     queryFn: async () =>
       (await api.GET("/shipments", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as
-        | { items: { id: string; shipmentNumber: number; status: string; buyerName: string | null }[] }
+        | {
+            items: {
+              id: string; shipmentNumber: number; status: string; buyerName: string | null;
+              wasteTypeCode: string | null; remainingWeightKg: string;
+            }[];
+          }
         | undefined,
     enabled: bag.data?.status === "weighed"
   });
@@ -497,20 +590,34 @@ export function WeightsPage(): React.ReactNode {
               {b.wasteTypeMismatch ? (
                 <Alert kind="warn">⚠ نوع النفاية المُلاحَظ ({b.observedWasteTypeCode}) مختلف عن المصرَّح به ({b.wasteTypeCode}).</Alert>
               ) : null}
-              <Select label="الصفقة المخصصة" value={shipmentPick} onChange={(e) => setShipmentPick(e.target.value)}>
-                <option value="">— اختر —</option>
-                {(openShipments.data?.items ?? []).filter((s) => s.status === "open").map((s) => (
-                  <option key={s.id} value={s.id}>صفقة #{s.shipmentNumber}{s.buyerName ? ` · ${s.buyerName}` : ""}</option>
-                ))}
-              </Select>
-              <Button disabled={attachMutation.isPending || !shipmentPick} onClick={() => attachMutation.mutate()}>
-                {attachMutation.isPending ? "…" : "✓ وضع الكيس في الصفقة"}
-              </Button>
-              {(openShipments.data?.items ?? []).filter((s) => s.status === "open").length === 0 ? (
-                <p className="text-xs text-stone-400">
-                  لا توجد صفقة مفتوحة حالياً — <Link className="text-brand-700 hover:underline" to="/sorter/shipments/new">أنشئ صفقة جديدة ←</Link>
-                </p>
-              ) : null}
+              {(() => {
+                const bagType = b.observedWasteTypeCode ?? b.wasteTypeCode;
+                const bagWeight = Number.parseFloat(b.finalWeightKg ?? "0");
+                const eligible = (openShipments.data?.items ?? []).filter(
+                  (s) => s.status === "open" && s.wasteTypeCode === bagType && Number.parseFloat(s.remainingWeightKg) >= bagWeight
+                );
+                return (
+                  <>
+                    <Select label={`الصفقة المخصصة (نوع ${bagType} فقط، بسعة كافية)`} value={shipmentPick} onChange={(e) => setShipmentPick(e.target.value)}>
+                      <option value="">— اختر —</option>
+                      {eligible.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          صفقة #{s.shipmentNumber}{s.buyerName ? ` · ${s.buyerName}` : ""} — المتبقي {formatWeight(s.remainingWeightKg)}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button disabled={attachMutation.isPending || !shipmentPick} onClick={() => attachMutation.mutate()}>
+                      {attachMutation.isPending ? "…" : "✓ وضع الكيس في الصفقة"}
+                    </Button>
+                    {eligible.length === 0 ? (
+                      <p className="text-xs text-stone-400">
+                        لا توجد صفقة مفتوحة من نوع {bagType} تتسع لوزن هذا الكيس حالياً —
+                        <Link className="mr-1 text-brand-700 hover:underline" to="/sorter/shipments/new">أنشئ صفقة جديدة ←</Link>
+                      </p>
+                    ) : null}
+                  </>
+                );
+              })()}
             </div>
           ) : null}
 

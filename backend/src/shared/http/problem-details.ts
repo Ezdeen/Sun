@@ -37,6 +37,7 @@ export const ERROR_MESSAGES_AR: Record<string, string> = {
   barcode_mismatch: "الباركود لا يطابق هذا الطلب",
   bag_state_invalid: "حالة الكيس لا تسمح بهذا الإجراء",
   weights_missing: "لا يمكن إنشاء الفاتورة قبل وزن جميع الأكياس",
+  shipment_capacity_exceeded: "الصفقة لا تستوعب هذا الوزن — تجاوز السعة المتبقية",
   duplicate_invoice: "توجد فاتورة فعّالة لهذه الصفقة بالفعل",
   splits_must_sum_100: "مجموع نسب التوزيع يجب أن يساوي 100 بالضبط",
   amount_must_be_positive: "المبلغ يجب أن يكون أكبر من صفر",
