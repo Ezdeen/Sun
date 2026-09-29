@@ -33,7 +33,7 @@ export function SorterDashboard(): React.ReactNode {
     queryFn: async () => (await api.GET("/sorter/dashboard")).data as unknown as SorterDashboardData | undefined
   });
   if (dash.isLoading) return <Loading />;
-  if (dash.isError || !dash.data) return <ErrorState />;
+  if (!dash.data) return <ErrorState />;
   const d = dash.data;
   return (
     <>
@@ -111,7 +111,7 @@ export function SorterShipments(): React.ReactNode {
     queryFn: async () => (await api.GET("/shipments", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as ShipmentsListData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.shipments} actions={<Link to="/sorter/shipments/new"><Button>＋ {ar.newShipment}</Button></Link>} /><EmptyState /></>;
   return (
     <>
@@ -256,7 +256,7 @@ export function ShipmentDetail(): React.ReactNode {
 
   if (!id) return <ErrorState />;
   if (detail.isLoading) return <Loading />;
-  if (detail.isError || !detail.data) return <ErrorState />;
+  if (!detail.data) return <ErrorState />;
   const d = detail.data;
   const isOpen = d.shipment.status === "open";
   const remaining = Number.parseFloat(d.shipment.remainingWeightKg);

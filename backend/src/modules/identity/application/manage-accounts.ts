@@ -14,6 +14,7 @@ import {
   findUserById,
   insertUser,
   upsertCredential,
+  resetLoginFailures,
   updateUserProfile,
   deleteUserById,
   attachCitizenProfile,
@@ -21,7 +22,7 @@ import {
   attachAuthorityProfile,
   attachStaffProfile
 } from "../infrastructure/users-repo.js";
-import { recordAuthEvent } from "../infrastructure/sessions-repo.js";
+import { recordAuthEvent, revokeAllUserRefreshTokens } from "../infrastructure/sessions-repo.js";
 import type { IdentityDeps } from "./deps.js";
 
 const AREA_ROLES: readonly Role[] = ["citizen", "collector", "authority"];
@@ -169,6 +170,10 @@ export async function updateAccountByManager(
       parallelism: 2
     });
     await upsertCredential(db, { userId, passwordHash });
+    // A reset must end every existing session (the old password may be the
+    // reason for the reset) and clear any lockout so the user can sign in.
+    await revokeAllUserRefreshTokens(db, userId, "password_reset_by_manager");
+    await resetLoginFailures(db, userId);
   }
 
   await recordAuthEvent(db, {

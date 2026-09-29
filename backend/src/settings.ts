@@ -19,6 +19,10 @@ export interface Settings {
   accessTokenTtlSeconds: number;
   refreshTokenTtlDays: number;
   corsOrigins: string[];
+  /** Number of reverse-proxy hops to trust for req.ip (0 = none). Behind Render use 1. */
+  trustProxyHops: number;
+  /** Per-IP/minute cap on credential endpoints (login, register, change-password…). */
+  authRateLimitMax: number;
   allowCitizenSelfRegistration: boolean;
   demoMode: boolean;
 }
@@ -96,6 +100,8 @@ export function loadSettings(): Settings {
     accessTokenTtlSeconds: int("ACCESS_TOKEN_TTL_SECONDS", 900, 60, 86400),
     refreshTokenTtlDays: int("REFRESH_TOKEN_TTL_DAYS", 14, 1, 365),
     corsOrigins,
+    trustProxyHops: int("TRUST_PROXY_HOPS", 0, 0, 5),
+    authRateLimitMax: int("AUTH_RATE_LIMIT_PER_MINUTE", 10, 1, 100_000),
     allowCitizenSelfRegistration: bool("ALLOW_CITIZEN_SELF_REGISTRATION", true),
     demoMode: bool("DEMO_MODE", false)
   };

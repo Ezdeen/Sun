@@ -51,7 +51,7 @@ export function registerLogisticsRoutes(
 ): void {
   app.post(
     "/shipments",
-    { preHandler: guards.requirePermission("shipment:create"), schema: { body: CreateShipmentBody } },
+    { onRequest: guards.requirePermission("shipment:create"), schema: { body: CreateShipmentBody } },
     async (req) => {
       const b = req.body as Static<typeof CreateShipmentBody>;
       return createShipment(deps, {
@@ -65,7 +65,7 @@ export function registerLogisticsRoutes(
     }
   );
 
-  app.get("/shipments", { preHandler: guards.requirePermission("shipment:read"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/shipments", { onRequest: guards.requirePermission("shipment:read"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const q = req.query as Record<string, unknown>;
     const status =
@@ -97,7 +97,7 @@ export function registerLogisticsRoutes(
     };
   });
 
-  app.get("/shipments/:id", { preHandler: guards.requirePermission("shipment:read") }, async (req) => {
+  app.get("/shipments/:id", { onRequest: guards.requirePermission("shipment:read") }, async (req) => {
     const { id } = req.params as { id: string };
     const shipment = await getShipment(deps.db, id);
     if (!shipment) throw new DomainError("not_found", "shipment not found", 404);
@@ -125,7 +125,7 @@ export function registerLogisticsRoutes(
 
   app.post(
     "/shipments/:id/bags",
-    { preHandler: guards.requirePermission("bag:weigh"), schema: { body: AttachBagBody } },
+    { onRequest: guards.requirePermission("bag:weigh"), schema: { body: AttachBagBody } },
     async (req) => {
       const { id } = req.params as { id: string };
       const b = req.body as Static<typeof AttachBagBody>;
@@ -140,7 +140,7 @@ export function registerLogisticsRoutes(
     }
   );
 
-  app.get("/bags/:qr", { preHandler: guards.requirePermission("shipment:read") }, async (req) => {
+  app.get("/bags/:qr", { onRequest: guards.requirePermission("shipment:read") }, async (req) => {
     const { qr } = req.params as { qr: string };
     const bag = await findBag(deps.db, qr);
     return {
@@ -162,7 +162,7 @@ export function registerLogisticsRoutes(
 
   // Step 1 of sorting (§5.11): scan the bag QR and register its arrival at
   // the sorting facility, matching it against an expected collected bag.
-  app.post("/bags/:qr/arrive", { preHandler: guards.requirePermission("bag:weigh") }, async (req) => {
+  app.post("/bags/:qr/arrive", { onRequest: guards.requirePermission("bag:weigh") }, async (req) => {
     const { qr } = req.params as { qr: string };
     return registerBagArrival(deps, {
       bagCode: qr,
@@ -176,7 +176,7 @@ export function registerLogisticsRoutes(
   // Step 2 of sorting: confirm waste type + record the locked-in weight.
   app.post(
     "/bags/:qr/weigh",
-    { preHandler: guards.requirePermission("bag:weigh"), schema: { body: WeighBody } },
+    { onRequest: guards.requirePermission("bag:weigh"), schema: { body: WeighBody } },
     async (req) => {
       const { qr } = req.params as { qr: string };
       const b = req.body as Static<typeof WeighBody>;

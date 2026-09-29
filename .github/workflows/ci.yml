@@ -49,6 +49,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waste_test
+      # Tests log in dozens of times from one address; the limiter has its own tests.
+      AUTH_RATE_LIMIT_PER_MINUTE: "100000"
       APP_ENV: test
       JWT_SECRET_KEY: ci-jwt-secret-0123456789abcdef0123456789
       IDENTITY_PEPPER: ci-pepper-0123456789abcdef0123456789
@@ -70,6 +72,8 @@ jobs:
         run: pnpm --filter @waste/backend db:seed:demo
       - name: Full E2E journey
         run: cd backend && npx tsx tests/e2e/full-journey.ts
+      - name: Security suite (sessions, role separation, IDOR, rate limits)
+        run: pnpm --filter @waste/backend test:security
 
   web:
     name: Web — typecheck + build + tests

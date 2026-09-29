@@ -1,0 +1,2388 @@
+diff --git a/.env.example b/.env.example
+index 0a7db18..4019eee 100644
+--- a/.env.example
++++ b/.env.example
+@@ -25,6 +25,16 @@ REFRESH_TOKEN_TTL_DAYS=14
+ # from the same Fastify service (production on Render) — no CORS needed.
+ CORS_ORIGINS=
+ 
++# ── Proxy & abuse limits ───────────────────────────────────
++# Reverse-proxy hops to trust when deriving the client IP (rate limits, audit
++# log). 0 = none (local dev). Behind Render use 1 and VERIFY the `ip` column
++# of auth_events shows real client addresses: too low shares one rate-limit
++# bucket among ALL users; too high lets clients spoof X-Forwarded-For.
++TRUST_PROXY_HOPS=0
++# Per-IP/minute cap on login, register, change-password, accept-invitation
++# (refresh allows 6x this).
++AUTH_RATE_LIMIT_PER_MINUTE=10
++
+ # ── Feature flags ──────────────────────────────────────────
+ ALLOW_CITIZEN_SELF_REGISTRATION=true
+ # MUST be false outside development — production boot fails otherwise.
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index d9144d7..0185fce 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -49,6 +49,8 @@ jobs:
+           --health-retries 10
+     env:
+       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/waste_test
++      # Tests log in dozens of times from one address; the limiter has its own tests.
++      AUTH_RATE_LIMIT_PER_MINUTE: "100000"
+       APP_ENV: test
+       JWT_SECRET_KEY: ci-jwt-secret-0123456789abcdef0123456789
+       IDENTITY_PEPPER: ci-pepper-0123456789abcdef0123456789
+@@ -70,6 +72,8 @@ jobs:
+         run: pnpm --filter @waste/backend db:seed:demo
+       - name: Full E2E journey
+         run: cd backend && npx tsx tests/e2e/full-journey.ts
++      - name: Security suite (sessions, role separation, IDOR, rate limits)
++        run: pnpm --filter @waste/backend test:security
+ 
+   web:
+     name: Web — typecheck + build + tests
+diff --git a/backend/package.json b/backend/package.json
+index d5c81f9..2fe50a1 100644
+--- a/backend/package.json
++++ b/backend/package.json
+@@ -13,7 +13,7 @@
+     "typecheck": "tsc --noEmit",
+     "lint": "eslint src tests",
+     "arch": "depcruise src --config .dependency-cruiser.cjs",
+-    "test": "vitest run --exclude 'tests/integration/**' --exclude 'tests/e2e/**'",
++    "test": "vitest run --exclude 'tests/integration/**' --exclude 'tests/e2e/**' --exclude 'tests/security/**'",
+     "test:unit": "vitest run tests/unit",
+     "test:property": "vitest run tests/property",
+     "test:integration": "vitest run tests/integration",
+diff --git a/backend/src/main.ts b/backend/src/main.ts
+index b4ff300..da717bd 100644
+--- a/backend/src/main.ts
++++ b/backend/src/main.ts
+@@ -15,6 +15,7 @@ import { SystemRandomSource } from "./shared/random.js";
+ import { problemDetails } from "./shared/http/problem-details.js";
+ import { createAuthGuards } from "./shared/http/middleware.js";
+ import { createTokenService } from "./modules/identity/application/token-service.js";
++import { createSessionValidator } from "./modules/identity/application/session-validator.js";
+ import { registerIdentityRoutes } from "./modules/identity/api/routes.js";
+ import { registerCatalogRoutes } from "./modules/catalog/api/routes.js";
+ import { registerPricingRoutes } from "./modules/pricing/api/routes.js";
+@@ -35,12 +36,20 @@ export interface AppContext {
+ 
+ export async function createApp(overrides?: { settings?: Settings }): Promise<AppContext> {
+   const settings = overrides?.settings ?? loadSettings();
++  // Trust exactly N proxy hops (proxy-addr semantics: hop 0 is the socket peer).
++  // Trusting "true" would let any client spoof X-Forwarded-For and dodge limits.
++  const hops = settings.trustProxyHops;
++  const trustProxy = hops > 0 ? (_addr: string, hop: number) => hop < hops : false;
+   const app = Fastify({
+     logger: {
+       level: settings.logLevel,
+       redact: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"],
+       timestamp: () => `,"time":"${new Date().toISOString()}"`
+     },
++    // Behind a reverse proxy (Render) req.ip would otherwise be the PROXY's
++    // address: every user would share one rate-limit bucket and every audit
++    // row would record the same IP.
++    trustProxy: trustProxy,
+     requestIdHeader: "x-request-id",
+     requestIdLogLabel: "request_id",
+     bodyLimit: 1_048_576
+@@ -62,7 +71,7 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
+   });
+   await app.register(fastifyRateLimit, {
+     global: true,
+-    max: 300,
++    max: 600, // per real client IP; sensitive routes set stricter limits
+     timeWindow: "1 minute",
+     errorResponseBuilder: () => ({
+       type: "https://waste-platform/errors/rate_limited",
+@@ -100,6 +109,14 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
+     }
+   });
+ 
++  // ── Never let a browser/proxy cache authenticated API data ────────────
++  app.addHook("onSend", async (req, reply) => {
++    if (req.url.startsWith("/api/")) {
++      void reply.header("cache-control", "no-store");
++      void reply.header("pragma", "no-cache");
++    }
++  });
++
+   // ── Error handling (RFC 7807, Arabic messages) ───────────────────────
+   app.setErrorHandler((err, req, reply) => problemDetails(req, reply, err));
+ 
+@@ -117,7 +134,7 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
+     issuer: "waste-platform",
+     audience: "waste-web"
+   });
+-  const guards = createAuthGuards(tokens);
++  const guards = createAuthGuards(tokens, createSessionValidator(db));
+   const identityDeps = { db, settings, clock, random, tokens };
+ 
+   // ── API v1 ───────────────────────────────────────────────────────────
+diff --git a/backend/src/modules/administration/api/routes.ts b/backend/src/modules/administration/api/routes.ts
+index 472726a..2459bfa 100644
+--- a/backend/src/modules/administration/api/routes.ts
++++ b/backend/src/modules/administration/api/routes.ts
+@@ -40,13 +40,13 @@ export function registerAdministrationRoutes(
+ ): void {
+   app.get(
+     "/admin/settings",
+-    { preHandler: guards.requirePermission("settings:update") },
++    { onRequest: guards.requirePermission("settings:update") },
+     async () => readSettingsForDisplay(db)
+   );
+ 
+   app.patch(
+     "/admin/settings",
+-    { preHandler: guards.requirePermission("settings:update"), schema: { body: UpdateSettingsBody } },
++    { onRequest: guards.requirePermission("settings:update"), schema: { body: UpdateSettingsBody } },
+     async (req) => {
+       const b = req.body as Static<typeof UpdateSettingsBody>;
+       await updateSettings(db, b, req.authUser!.id);
+diff --git a/backend/src/modules/catalog/api/routes.ts b/backend/src/modules/catalog/api/routes.ts
+index 25ba68e..17e0902 100644
+--- a/backend/src/modules/catalog/api/routes.ts
++++ b/backend/src/modules/catalog/api/routes.ts
+@@ -74,13 +74,13 @@ export function registerCatalogRoutes(
+ 
+   app.get(
+     "/admin/waste-types",
+-    { preHandler: guards.requirePermission("catalog:manage") },
++    { onRequest: guards.requirePermission("catalog:manage") },
+     async () => readManagedWasteTypes(db)
+   );
+ 
+   app.post(
+     "/admin/waste-types",
+-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: WasteTypeBody } },
++    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: WasteTypeBody } },
+     async (req) => {
+       const b = req.body as Static<typeof WasteTypeBody>;
+       return createWasteType(db, b);
+@@ -90,7 +90,7 @@ export function registerCatalogRoutes(
+   app.patch(
+     "/admin/waste-types/:code",
+     {
+-      preHandler: guards.requirePermission("catalog:manage"),
++      onRequest: guards.requirePermission("catalog:manage"),
+       schema: {
+         body: Type.Partial(WasteTypeBody, { additionalProperties: false })
+       }
+@@ -104,13 +104,13 @@ export function registerCatalogRoutes(
+ 
+   app.delete(
+     "/admin/waste-types/:code",
+-    { preHandler: guards.requirePermission("catalog:manage") },
++    { onRequest: guards.requirePermission("catalog:manage") },
+     async (req) => deleteWasteType(db, (req.params as { code: string }).code)
+   );
+ 
+   app.post(
+     "/admin/addons",
+-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
++    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
+     async (req) => {
+       const b = req.body as Static<typeof AddonBody>;
+       return createAddon(db, b);
+@@ -120,7 +120,7 @@ export function registerCatalogRoutes(
+   app.patch(
+     "/admin/addons/:code",
+     {
+-      preHandler: guards.requirePermission("catalog:manage"),
++      onRequest: guards.requirePermission("catalog:manage"),
+       schema: {
+         body: AddonPatchBody
+       }
+@@ -133,20 +133,20 @@ export function registerCatalogRoutes(
+ 
+   app.delete(
+     "/admin/addons/:code",
+-    { preHandler: guards.requirePermission("catalog:manage") },
++    { onRequest: guards.requirePermission("catalog:manage") },
+     async (req) => deleteAddon(db, (req.params as { code: string }).code)
+   );
+ 
+   // ── Service areas (manager) ──────────────────────────────────────────
+   app.get(
+     "/admin/service-areas",
+-    { preHandler: guards.requirePermission("catalog:manage") },
++    { onRequest: guards.requirePermission("catalog:manage") },
+     async () => ({ items: await listServiceAreasForManager(db) })
+   );
+ 
+   app.post(
+     "/admin/service-areas",
+-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: ServiceAreaBody } },
++    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: ServiceAreaBody } },
+     async (req, reply) => {
+       const b = req.body as Static<typeof ServiceAreaBody>;
+       const row = await createServiceArea(db, b);
+@@ -158,7 +158,7 @@ export function registerCatalogRoutes(
+   app.patch(
+     "/admin/service-areas/:id",
+     {
+-      preHandler: guards.requirePermission("catalog:manage"),
++      onRequest: guards.requirePermission("catalog:manage"),
+       schema: { body: Type.Partial(ServiceAreaBody, { additionalProperties: false }) }
+     },
+     async (req) => {
+@@ -170,7 +170,7 @@ export function registerCatalogRoutes(
+ 
+   app.delete(
+     "/admin/service-areas/:id",
+-    { preHandler: guards.requirePermission("catalog:manage") },
++    { onRequest: guards.requirePermission("catalog:manage") },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       await deleteServiceArea(db, id);
+@@ -182,7 +182,7 @@ export function registerCatalogRoutes(
+   app.patch(
+     "/admin/service-areas/:id/authority",
+     {
+-      preHandler: guards.requirePermission("catalog:manage"),
++      onRequest: guards.requirePermission("catalog:manage"),
+       schema: { body: ServiceAreaAuthorityBody }
+     },
+     async (req) => {
+diff --git a/backend/src/modules/collection/api/routes.ts b/backend/src/modules/collection/api/routes.ts
+index 771707e..e73a8a2 100644
+--- a/backend/src/modules/collection/api/routes.ts
++++ b/backend/src/modules/collection/api/routes.ts
+@@ -58,7 +58,7 @@ export function registerCollectionRoutes(
+ ): void {
+   app.post(
+     "/requests",
+-    { preHandler: guards.requirePermission("request:create"), schema: { body: CreateRequestBody } },
++    { onRequest: guards.requirePermission("request:create"), schema: { body: CreateRequestBody } },
+     async (req) => {
+       const body = req.body as Static<typeof CreateRequestBody>;
+       if (req.authUser!.role !== "citizen" && req.authUser!.role !== "manager") {
+@@ -72,7 +72,7 @@ export function registerCollectionRoutes(
+     }
+   );
+ 
+-  app.get("/requests", { preHandler: guards.requirePermission("request:read"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/requests", { onRequest: guards.requirePermission("request:read"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const q = req.query as Record<string, unknown>;
+     const status = typeof q["status"] === "string" && (REQUEST_STATUSES as readonly string[]).includes(q["status"])
+@@ -104,7 +104,7 @@ export function registerCollectionRoutes(
+     };
+   });
+ 
+-  app.get("/requests/:id", { preHandler: guards.requirePermission("request:read") }, async (req) => {
++  app.get("/requests/:id", { onRequest: guards.requirePermission("request:read") }, async (req) => {
+     const { id } = req.params as { id: string };
+     const actor = await actorContext(deps.db, req.authUser!);
+     const request = await getRequest(deps.db, id);
+@@ -141,7 +141,7 @@ export function registerCollectionRoutes(
+ 
+   app.post(
+     "/requests/:id/transitions",
+-    { preHandler: guards.requirePermission("request:transition"), schema: { body: TransitionBody } },
++    { onRequest: guards.requirePermission("request:transition"), schema: { body: TransitionBody } },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       const body = req.body as Static<typeof TransitionBody>;
+@@ -164,7 +164,7 @@ export function registerCollectionRoutes(
+     }
+   );
+ 
+-  app.get("/collector/schedule", { preHandler: guards.requirePermission("schedule:read") }, async (req) => {
++  app.get("/collector/schedule", { onRequest: guards.requirePermission("schedule:read") }, async (req) => {
+     return collectorSchedule(deps.db, req.authUser!.id);
+   });
+ }
+diff --git a/backend/src/modules/dashboards/api/routes.ts b/backend/src/modules/dashboards/api/routes.ts
+index 1e9c310..5d24632 100644
+--- a/backend/src/modules/dashboards/api/routes.ts
++++ b/backend/src/modules/dashboards/api/routes.ts
+@@ -20,28 +20,28 @@ export function registerDashboardRoutes(
+   db: Db,
+   guards: AuthGuards
+ ): void {
+-  app.get("/citizen/dashboard", { preHandler: guards.requireRole("citizen") }, async (req) =>
++  app.get("/citizen/dashboard", { onRequest: guards.requireRole("citizen") }, async (req) =>
+     citizenDashboard(db, req.authUser!.id)
+   );
+ 
+-  app.get("/collector/dashboard", { preHandler: guards.requireRole("collector") }, async (req) =>
++  app.get("/collector/dashboard", { onRequest: guards.requireRole("collector") }, async (req) =>
+     collectorDashboard(db, req.authUser!.id)
+   );
+ 
+-  app.get("/authority/dashboard", { preHandler: guards.requireRole("authority") }, async (req) => {
++  app.get("/authority/dashboard", { onRequest: guards.requireRole("authority") }, async (req) => {
+     const serviceAreaId = await getServiceAreaForUser(db, req.authUser!.id);
+     return authorityDashboard(db, serviceAreaId);
+   });
+ 
+-  app.get("/sorter/dashboard", { preHandler: guards.requireRole("sorter") }, async () =>
++  app.get("/sorter/dashboard", { onRequest: guards.requireRole("sorter") }, async () =>
+     sorterDashboard(db)
+   );
+ 
+-  app.get("/finance/dashboard", { preHandler: guards.requireRole("finance") }, async () =>
++  app.get("/finance/dashboard", { onRequest: guards.requireRole("finance") }, async () =>
+     financeDashboardData(db)
+   );
+ 
+-  app.get("/manager/dashboard", { preHandler: guards.requireRole("manager") }, async () =>
++  app.get("/manager/dashboard", { onRequest: guards.requireRole("manager") }, async () =>
+     managerDashboard(db)
+   );
+ }
+diff --git a/backend/src/modules/finance/api/routes.ts b/backend/src/modules/finance/api/routes.ts
+index 3d4129f..1ab4eca 100644
+--- a/backend/src/modules/finance/api/routes.ts
++++ b/backend/src/modules/finance/api/routes.ts
+@@ -43,7 +43,7 @@ export function registerFinanceRoutes(
+   app.post(
+     "/invoices",
+     {
+-      preHandler: guards.requirePermission("invoice:create"),
++      onRequest: guards.requirePermission("invoice:create"),
+       schema: {
+         body: CreateInvoiceBody,
+         headers: Type.Object({
+@@ -66,7 +66,7 @@ export function registerFinanceRoutes(
+     }
+   );
+ 
+-  app.get("/invoices", { preHandler: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/invoices", { onRequest: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const q = req.query as Record<string, unknown>;
+     const status = q["status"] === "active" || q["status"] === "void" ? (q["status"] as "active" | "void") : undefined;
+@@ -88,7 +88,7 @@ export function registerFinanceRoutes(
+     };
+   });
+ 
+-  app.get("/invoices/:id", { preHandler: guards.requirePermission("ledger:read") }, async (req) => {
++  app.get("/invoices/:id", { onRequest: guards.requirePermission("ledger:read") }, async (req) => {
+     const { id } = req.params as { id: string };
+     const invoice = await getInvoice(deps.db, id);
+     if (!invoice) throw new DomainError("not_found", "invoice not found", 404);
+@@ -107,7 +107,7 @@ export function registerFinanceRoutes(
+     };
+   });
+ 
+-  app.get("/finance/ledger", { preHandler: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/finance/ledger", { onRequest: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const result = await listLedger(deps.db, { limit: p.pageSize, offset: p.offset });
+     return {
+@@ -118,7 +118,7 @@ export function registerFinanceRoutes(
+     };
+   });
+ 
+-  app.get("/payouts", { preHandler: guards.requirePermission("payout:transition"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/payouts", { onRequest: guards.requirePermission("payout:transition"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const q = req.query as Record<string, unknown>;
+     const status =
+@@ -147,7 +147,7 @@ export function registerFinanceRoutes(
+     };
+   });
+ 
+-  app.get("/me/payouts", { preHandler: guards.requirePermission("payout:read:own"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/me/payouts", { onRequest: guards.requirePermission("payout:read:own"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const result = await listPayouts(deps.db, { limit: p.pageSize, offset: p.offset }, {
+       beneficiaryUserId: req.authUser!.id
+@@ -170,7 +170,7 @@ export function registerFinanceRoutes(
+ 
+   app.post(
+     "/payouts/:id/transitions",
+-    { preHandler: guards.requirePermission("payout:transition"), schema: { body: PayoutTransitionBody } },
++    { onRequest: guards.requirePermission("payout:transition"), schema: { body: PayoutTransitionBody } },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       const b = req.body as Static<typeof PayoutTransitionBody>;
+diff --git a/backend/src/modules/identity/api/routes.ts b/backend/src/modules/identity/api/routes.ts
+index 6c32603..0ce580d 100644
+--- a/backend/src/modules/identity/api/routes.ts
++++ b/backend/src/modules/identity/api/routes.ts
+@@ -22,7 +22,13 @@ import {
+   deleteAccountByManager
+ } from "../application/manage-accounts.js";
+ import { listUsers, updateUserStatus } from "../infrastructure/users-repo.js";
+-import { listAuthEvents, recordAuthEvent } from "../infrastructure/sessions-repo.js";
++import {
++  findActiveRefreshToken,
++  listAuthEvents,
++  recordAuthEvent,
++  revokeAllUserRefreshTokens
++} from "../infrastructure/sessions-repo.js";
++import { sha256Hex } from "../domain/identity-hash.js";
+ import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH, type IdentityDeps } from "../application/deps.js";
+ import type { AuthGuards } from "../../../shared/http/middleware.js";
+ import { parsePageParams } from "../../../shared/http/pagination.js";
+@@ -112,12 +118,16 @@ export function registerIdentityRoutes(
+ ): void {
+   const cookieOpts = {
+     httpOnly: true,
+-    sameSite: "lax" as const,
++    sameSite: "strict" as const,
+     secure: deps.settings.env === "production",
+     path: REFRESH_COOKIE_PATH
+   };
+ 
+-  app.post("/auth/login", { schema: { body: LoginBody } }, async (req, reply) => {
++  const strict = (max = deps.settings.authRateLimitMax) => ({
++    rateLimit: { max, timeWindow: "1 minute" }
++  });
++
++  app.post("/auth/login", { config: strict(), schema: { body: LoginBody } }, async (req, reply) => {
+     const body = req.body as LoginBodyT;
+     const result = await login(deps, {
+       identifier: body.identifier,
+@@ -132,7 +142,8 @@ export function registerIdentityRoutes(
+     return { accessToken: result.accessToken, user: result.user };
+   });
+ 
+-  app.post("/auth/refresh", async (req, reply) => {
++  // Boot + several tabs call this; generous but still bounded.
++  app.post("/auth/refresh", { config: strict(deps.settings.authRateLimitMax * 6) }, async (req, reply) => {
+     const raw = req.cookies[REFRESH_COOKIE_NAME];
+     if (!raw) throw new DomainError("unauthorized", "refresh cookie missing", 401);
+     const result = await refresh(deps, {
+@@ -147,31 +158,33 @@ export function registerIdentityRoutes(
+     return { accessToken: result.accessToken };
+   });
+ 
+-  app.post("/auth/logout", { preHandler: guards.requireAuth }, async (req, reply) => {
++  // Logout must work with the refresh cookie ALONE: by the time a user clicks
++  // it the 15-min access token has often expired, and a logout that 401s
++  // would leave the refresh token alive server-side.
++  app.post("/auth/logout", async (req, reply) => {
+     const raw = req.cookies[REFRESH_COOKIE_NAME] ?? null;
+-    await logout(deps, {
+-      refreshToken: raw,
+-      userId: req.authUser!.id,
+-      ip: req.ip
+-    });
++    if (raw) {
++      const row = await findActiveRefreshToken(deps.db, sha256Hex(raw));
++      if (row) await logout(deps, { refreshToken: raw, userId: row.userId, ip: req.ip });
++    }
+     void reply.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+     return { ok: true };
+   });
+ 
+-  app.post("/auth/logout-all", { preHandler: guards.requireAuth }, async (req, reply) => {
++  app.post("/auth/logout-all", { onRequest: guards.requireAuth }, async (req, reply) => {
+     const revoked = await logoutAll(deps, { userId: req.authUser!.id, ip: req.ip });
+     void reply.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+     return { ok: true, revokedSessions: revoked };
+   });
+ 
+-  app.get("/auth/me", { preHandler: guards.requireAuth }, async (req) => {
++  app.get("/auth/me", { onRequest: guards.requireAuth }, async (req) => {
+     const u = req.authUser!;
+-    return { id: u.id, role: u.role, permissions: [...u.permissions] };
++    return { id: u.id, role: u.role, displayName: u.displayName, permissions: [...u.permissions] };
+   });
+ 
+   app.post(
+     "/auth/change-password",
+-    { preHandler: guards.requireAuth, schema: { body: ChangePasswordBody } },
++    { onRequest: guards.requireAuth, config: strict(), schema: { body: ChangePasswordBody } },
+     async (req, reply) => {
+       const body = req.body as Static<typeof ChangePasswordBody>;
+       await changePassword(deps, {
+@@ -186,7 +199,7 @@ export function registerIdentityRoutes(
+ 
+   app.post(
+     "/auth/invitations/accept",
+-    { schema: { body: AcceptInvitationBody } },
++    { config: strict(), schema: { body: AcceptInvitationBody } },
+     async (req) => {
+       const body = req.body as Static<typeof AcceptInvitationBody>;
+       const result = await acceptInvitationAndCreateUser(deps, {
+@@ -199,7 +212,7 @@ export function registerIdentityRoutes(
+     }
+   );
+ 
+-  app.post("/citizens/register", { schema: { body: RegisterCitizenBody } }, async (req) => {
++  app.post("/citizens/register", { config: strict(), schema: { body: RegisterCitizenBody } }, async (req) => {
+     const body = req.body as Static<typeof RegisterCitizenBody>;
+     const result = await registerCitizen(deps, {
+       displayName: body.displayName,
+@@ -216,7 +229,7 @@ export function registerIdentityRoutes(
+   // ── Manager-only surface ───────────────────────────────────────────
+   app.post(
+     "/admin/invitations",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { body: InvitationBody } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { body: InvitationBody } },
+     async (req) => {
+       const body = req.body as Static<typeof InvitationBody>;
+       return createInvitation(deps, {
+@@ -230,7 +243,7 @@ export function registerIdentityRoutes(
+ 
+   app.get(
+     "/admin/invitations",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+     async (req) => {
+       const p = parsePageParams(req.query as Record<string, unknown>);
+       const result = await listPendingInvitations(deps, p.page, p.pageSize);
+@@ -252,7 +265,7 @@ export function registerIdentityRoutes(
+ 
+   app.delete(
+     "/admin/invitations/:id",
+-    { preHandler: guards.requirePermission("account:manage") },
++    { onRequest: guards.requirePermission("account:manage") },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       await revokeInvitationById(deps, id);
+@@ -262,7 +275,7 @@ export function registerIdentityRoutes(
+ 
+   app.get(
+     "/admin/accounts",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+     async (req) => {
+       const q = req.query as Record<string, unknown>;
+       const p = parsePageParams(q);
+@@ -288,7 +301,7 @@ export function registerIdentityRoutes(
+   /** Manager: create an account directly (any role), no invitation needed. */
+   app.post(
+     "/admin/accounts",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { body: CreateAccountBody } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { body: CreateAccountBody } },
+     async (req, reply) => {
+       const b = req.body as Static<typeof CreateAccountBody>;
+       const result = await createAccountByManager(deps, {
+@@ -308,7 +321,7 @@ export function registerIdentityRoutes(
+   /** Manager: edit an existing account's display name / email / phone / password. */
+   app.patch(
+     "/admin/accounts/:id",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       const b = req.body as Static<typeof UpdateAccountBody>;
+@@ -332,7 +345,7 @@ export function registerIdentityRoutes(
+   /** Manager: permanently delete an account (blocked if it has business history). */
+   app.delete(
+     "/admin/accounts/:id",
+-    { preHandler: guards.requirePermission("account:manage") },
++    { onRequest: guards.requirePermission("account:manage") },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       await deleteAccountByManager(deps, id, req.authUser!.id);
+@@ -343,7 +356,7 @@ export function registerIdentityRoutes(
+   app.patch(
+     "/admin/accounts/:id/status",
+     {
+-      preHandler: guards.requirePermission("account:manage"),
++      onRequest: guards.requirePermission("account:manage"),
+       schema: {
+         body: Type.Object({
+           status: Type.Union([Type.Literal("active"), Type.Literal("disabled")])
+@@ -358,6 +371,9 @@ export function registerIdentityRoutes(
+       }
+       const updated = await updateUserStatus(deps.db, id, body.status);
+       if (!updated) throw new DomainError("not_found", "user not found", 404);
++      if (body.status === "disabled") {
++        await revokeAllUserRefreshTokens(deps.db, id, "account_disabled");
++      }
+       await recordAuthEvent(deps.db, {
+         id: randomUUID(),
+         userId: id,
+@@ -370,7 +386,7 @@ export function registerIdentityRoutes(
+ 
+   app.get(
+     "/admin/audit",
+-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
++    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+     async (req) => {
+       const p = parsePageParams(req.query as Record<string, unknown>);
+       const result = await listAuthEvents(deps.db, {
+diff --git a/backend/src/modules/identity/application/manage-accounts.ts b/backend/src/modules/identity/application/manage-accounts.ts
+index a073794..c5b713b 100644
+--- a/backend/src/modules/identity/application/manage-accounts.ts
++++ b/backend/src/modules/identity/application/manage-accounts.ts
+@@ -14,6 +14,7 @@ import {
+   findUserById,
+   insertUser,
+   upsertCredential,
++  resetLoginFailures,
+   updateUserProfile,
+   deleteUserById,
+   attachCitizenProfile,
+@@ -21,7 +22,7 @@ import {
+   attachAuthorityProfile,
+   attachStaffProfile
+ } from "../infrastructure/users-repo.js";
+-import { recordAuthEvent } from "../infrastructure/sessions-repo.js";
++import { recordAuthEvent, revokeAllUserRefreshTokens } from "../infrastructure/sessions-repo.js";
+ import type { IdentityDeps } from "./deps.js";
+ 
+ const AREA_ROLES: readonly Role[] = ["citizen", "collector", "authority"];
+@@ -169,6 +170,10 @@ export async function updateAccountByManager(
+       parallelism: 2
+     });
+     await upsertCredential(db, { userId, passwordHash });
++    // A reset must end every existing session (the old password may be the
++    // reason for the reset) and clear any lockout so the user can sign in.
++    await revokeAllUserRefreshTokens(db, userId, "password_reset_by_manager");
++    await resetLoginFailures(db, userId);
+   }
+ 
+   await recordAuthEvent(db, {
+diff --git a/backend/src/modules/identity/application/refresh.ts b/backend/src/modules/identity/application/refresh.ts
+index 4ab6052..61a64fc 100644
+--- a/backend/src/modules/identity/application/refresh.ts
++++ b/backend/src/modules/identity/application/refresh.ts
+@@ -5,7 +5,6 @@
+ import { DomainError } from "../../../shared/errors.js";
+ import { sha256Hex } from "../domain/identity-hash.js";
+ import { uuidv7 } from "../../../shared/ids.js";
+-import { permissionsForRole } from "../domain/permissions.js";
+ import {
+   findActiveRefreshToken,
+   rotateRefreshToken,
+@@ -20,6 +19,22 @@ export interface RefreshOutput {
+   refreshToken: string;
+ }
+ 
++async function handleReuse(
++  deps: IdentityDeps,
++  row: { id: string; userId: string },
++  input: { ip?: string | null; userAgent?: string | null }
++): Promise<void> {
++  await revokeAllUserRefreshTokens(deps.db, row.userId, "reuse_detected");
++  await recordAuthEvent(deps.db, {
++    id: uuidv7(),
++    userId: row.userId,
++    eventType: "refresh_reuse_detected",
++    ip: input.ip,
++    userAgent: input.userAgent,
++    details: { reusedTokenId: row.id }
++  });
++}
++
+ export async function refresh(
+   deps: IdentityDeps,
+   input: { refreshToken: string; ip?: string | null; userAgent?: string | null }
+@@ -33,17 +48,15 @@ export async function refresh(
+   }
+ 
+   if (row.revokedAt !== null) {
+-    // REUSE DETECTED — revoke every session of this user.
+-    await revokeAllUserRefreshTokens(db, row.userId, "reuse_detected");
+-    await recordAuthEvent(db, {
+-      id: uuidv7(),
+-      userId: row.userId,
+-      eventType: "refresh_reuse_detected",
+-      ip: input.ip,
+-      userAgent: input.userAgent,
+-      details: { reusedTokenId: row.id }
+-    });
+-    throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
++    // Only a token that was already ROTATED is evidence of theft (someone is
++    // replaying a superseded token). A token revoked by logout / password
++    // change / disable is simply dead: reject it, but do not let a stale
++    // cookie kick the legitimate user out of every device.
++    if (row.revokedReason === "rotated") {
++      await handleReuse(deps, row, input);
++      throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
++    }
++    throw new DomainError("unauthorized", "refresh token revoked", 401);
+   }
+ 
+   if (row.expiresAt.getTime() <= clock.now().getTime()) {
+@@ -61,7 +74,7 @@ export async function refresh(
+   const expiresAt = new Date(
+     clock.now().getTime() + deps.settings.refreshTokenTtlDays * 86_400_000
+   );
+-  await rotateRefreshToken(db, {
++  const rotated = await rotateRefreshToken(db, {
+     oldId: row.id,
+     userId: row.userId,
+     newId,
+@@ -70,6 +83,12 @@ export async function refresh(
+     ip: input.ip,
+     userAgent: input.userAgent
+   });
++  if (!rotated) {
++    // Lost a concurrent-rotation race: a second holder of the same token
++    // exists. We cannot tell a racing tab from an attacker, so fail safe.
++    await handleReuse(deps, row, input);
++    throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
++  }
+   await recordAuthEvent(db, {
+     id: uuidv7(),
+     userId: row.userId,
+@@ -84,6 +103,5 @@ export async function refresh(
+     sessionId: newId
+   });
+ 
+-  void permissionsForRole; // permissions travel inside the access token role
+   return { accessToken, refreshToken: newRefreshToken };
+ }
+diff --git a/backend/src/modules/identity/application/session-validator.ts b/backend/src/modules/identity/application/session-validator.ts
+new file mode 100644
+index 0000000..a536224
+--- /dev/null
++++ b/backend/src/modules/identity/application/session-validator.ts
+@@ -0,0 +1,34 @@
++/**
++ * Session validator — closes the gap between a stateless JWT and reality.
++ * A signed access token proves only "we issued this once". Before trusting it
++ * we confirm, against the database, that:
++ *   1. the session (refresh chain) it belongs to is not revoked,
++ *   2. the user still exists and is `active`,
++ *   3. the user's role still equals the role claimed in the token.
++ * Cost: one indexed round-trip per authenticated request.
++ */
++import type { Db } from "../../../shared/db/client.js";
++import { findSessionState } from "../infrastructure/sessions-repo.js";
++import type { Role } from "../domain/permissions.js";
++
++export interface ValidSession {
++  displayName: string;
++}
++
++export interface SessionValidator {
++  /** Returns the live session, or null when the token must be rejected. */
++  validate(claims: { sub: string; sid: string; role: Role }): Promise<ValidSession | null>;
++}
++
++export function createSessionValidator(db: Db): SessionValidator {
++  return {
++    async validate({ sub, sid, role }) {
++      const state = await findSessionState(db, sub, sid);
++      if (!state) return null; // unknown user/session (e.g. account deleted)
++      if (state.headRevoked) return null; // logout / logout-all / password change / reuse
++      if (state.userStatus !== "active") return null; // disabled / pending
++      if (state.userRole !== role) return null; // role changed since issuance
++      return { displayName: state.displayName };
++    }
++  };
++}
+diff --git a/backend/src/modules/identity/infrastructure/sessions-repo.ts b/backend/src/modules/identity/infrastructure/sessions-repo.ts
+index 04f3774..74897e0 100644
+--- a/backend/src/modules/identity/infrastructure/sessions-repo.ts
++++ b/backend/src/modules/identity/infrastructure/sessions-repo.ts
+@@ -4,6 +4,7 @@
+  * rotation and reuse detection.
+  */
+ import { and, eq, isNull, sql, gt } from "drizzle-orm";
++import type { Db } from "../../../shared/db/client.js";
+ import type { DbOrTx } from "../../../shared/db/unit-of-work.js";
+ import { refreshTokens, authEvents } from "../../../shared/db/schema.js";
+ 
+@@ -39,8 +40,14 @@ export async function findActiveRefreshToken(db: DbOrTx, tokenHash: string) {
+   return rows[0];
+ }
+ 
++/**
++ * Atomic single-use rotation. The UPDATE only matches a token that is still
++ * un-revoked, so of two concurrent refreshes exactly ONE can win; the loser
++ * gets `false` and must be treated as token reuse (never as a second valid
++ * descendant — that would fork the chain and defeat reuse detection).
++ */
+ export async function rotateRefreshToken(
+-  db: DbOrTx,
++  db: Db,
+   input: {
+     oldId: string;
+     userId: string;
+@@ -50,19 +57,24 @@ export async function rotateRefreshToken(
+     ip?: string | null;
+     userAgent?: string | null;
+   }
+-): Promise<void> {
+-  await db
+-    .update(refreshTokens)
+-    .set({ revokedAt: new Date(), revokedReason: "rotated", replacedBy: input.newId })
+-    .where(and(eq(refreshTokens.id, input.oldId), isNull(refreshTokens.revokedAt)));
+-  await db.insert(refreshTokens).values({
+-    id: input.newId,
+-    userId: input.userId,
+-    tokenHash: input.newTokenHash,
+-    expiresAt: input.expiresAt,
+-    rotatedFrom: input.oldId,
+-    ip: input.ip ?? null,
+-    userAgent: input.userAgent ?? null
++): Promise<boolean> {
++  return db.transaction(async (tx) => {
++    const won = await tx
++      .update(refreshTokens)
++      .set({ revokedAt: new Date(), revokedReason: "rotated", replacedBy: input.newId })
++      .where(and(eq(refreshTokens.id, input.oldId), isNull(refreshTokens.revokedAt)))
++      .returning({ id: refreshTokens.id });
++    if (won.length === 0) return false;
++    await tx.insert(refreshTokens).values({
++      id: input.newId,
++      userId: input.userId,
++      tokenHash: input.newTokenHash,
++      expiresAt: input.expiresAt,
++      rotatedFrom: input.oldId,
++      ip: input.ip ?? null,
++      userAgent: input.userAgent ?? null
++    });
++    return true;
+   });
+ }
+ 
+@@ -98,6 +110,59 @@ export async function countActiveSessions(db: DbOrTx, userId: string): Promise<n
+   return countRow?.count ?? 0;
+ }
+ 
++/**
++ * Live state of the session an access token belongs to. `sid` is the id of
++ * the refresh-token row current when the token was issued; rotation may have
++ * moved the chain on since, so we walk `replaced_by` to the chain HEAD and
++ * judge revocation there (logout / logout-all / password change / reuse
++ * revoke the head). The user's status and role are read from the DB so a
++ * disabled account or changed role takes effect immediately.
++ */
++export interface SessionState {
++  userStatus: string;
++  userRole: string;
++  displayName: string;
++  headRevoked: boolean;
++}
++
++export async function findSessionState(
++  db: DbOrTx,
++  userId: string,
++  sessionId: string
++): Promise<SessionState | null> {
++  const res = await db.execute(sql`
++    WITH RECURSIVE chain AS (
++      SELECT id, replaced_by, revoked_at, 0 AS depth
++        FROM app.refresh_tokens
++       WHERE id = ${sessionId} AND user_id = ${userId}
++      UNION ALL
++      SELECT r.id, r.replaced_by, r.revoked_at, c.depth + 1
++        FROM app.refresh_tokens r
++        JOIN chain c ON r.id = c.replaced_by
++       WHERE c.depth < 100
++    )
++    SELECT u.status AS user_status, u.role AS user_role, u.display_name,
++           (SELECT (revoked_at IS NOT NULL) FROM chain ORDER BY depth DESC LIMIT 1) AS head_revoked,
++           EXISTS (SELECT 1 FROM chain) AS has_session
++      FROM app.users u
++     WHERE u.id = ${userId}
++  `);
++  const row = (res.rows as {
++    user_status: string;
++    user_role: string;
++    display_name: string;
++    head_revoked: boolean | null;
++    has_session: boolean;
++  }[])[0];
++  if (!row || !row.has_session) return null;
++  return {
++    userStatus: row.user_status,
++    userRole: row.user_role,
++    displayName: row.display_name,
++    headRevoked: row.head_revoked === true
++  };
++}
++
+ // ── Auth events (audit) ──────────────────────────────────────────────────
+ export async function recordAuthEvent(
+   db: DbOrTx,
+diff --git a/backend/src/modules/logistics/api/routes.ts b/backend/src/modules/logistics/api/routes.ts
+index 42317aa..47c77ea 100644
+--- a/backend/src/modules/logistics/api/routes.ts
++++ b/backend/src/modules/logistics/api/routes.ts
+@@ -51,7 +51,7 @@ export function registerLogisticsRoutes(
+ ): void {
+   app.post(
+     "/shipments",
+-    { preHandler: guards.requirePermission("shipment:create"), schema: { body: CreateShipmentBody } },
++    { onRequest: guards.requirePermission("shipment:create"), schema: { body: CreateShipmentBody } },
+     async (req) => {
+       const b = req.body as Static<typeof CreateShipmentBody>;
+       return createShipment(deps, {
+@@ -65,7 +65,7 @@ export function registerLogisticsRoutes(
+     }
+   );
+ 
+-  app.get("/shipments", { preHandler: guards.requirePermission("shipment:read"), schema: { querystring: PageQuery } }, async (req) => {
++  app.get("/shipments", { onRequest: guards.requirePermission("shipment:read"), schema: { querystring: PageQuery } }, async (req) => {
+     const p = parsePageParams(req.query as Record<string, unknown>);
+     const q = req.query as Record<string, unknown>;
+     const status =
+@@ -97,7 +97,7 @@ export function registerLogisticsRoutes(
+     };
+   });
+ 
+-  app.get("/shipments/:id", { preHandler: guards.requirePermission("shipment:read") }, async (req) => {
++  app.get("/shipments/:id", { onRequest: guards.requirePermission("shipment:read") }, async (req) => {
+     const { id } = req.params as { id: string };
+     const shipment = await getShipment(deps.db, id);
+     if (!shipment) throw new DomainError("not_found", "shipment not found", 404);
+@@ -125,7 +125,7 @@ export function registerLogisticsRoutes(
+ 
+   app.post(
+     "/shipments/:id/bags",
+-    { preHandler: guards.requirePermission("bag:weigh"), schema: { body: AttachBagBody } },
++    { onRequest: guards.requirePermission("bag:weigh"), schema: { body: AttachBagBody } },
+     async (req) => {
+       const { id } = req.params as { id: string };
+       const b = req.body as Static<typeof AttachBagBody>;
+@@ -140,7 +140,7 @@ export function registerLogisticsRoutes(
+     }
+   );
+ 
+-  app.get("/bags/:qr", { preHandler: guards.requirePermission("shipment:read") }, async (req) => {
++  app.get("/bags/:qr", { onRequest: guards.requirePermission("shipment:read") }, async (req) => {
+     const { qr } = req.params as { qr: string };
+     const bag = await findBag(deps.db, qr);
+     return {
+@@ -162,7 +162,7 @@ export function registerLogisticsRoutes(
+ 
+   // Step 1 of sorting (§5.11): scan the bag QR and register its arrival at
+   // the sorting facility, matching it against an expected collected bag.
+-  app.post("/bags/:qr/arrive", { preHandler: guards.requirePermission("bag:weigh") }, async (req) => {
++  app.post("/bags/:qr/arrive", { onRequest: guards.requirePermission("bag:weigh") }, async (req) => {
+     const { qr } = req.params as { qr: string };
+     return registerBagArrival(deps, {
+       bagCode: qr,
+@@ -176,7 +176,7 @@ export function registerLogisticsRoutes(
+   // Step 2 of sorting: confirm waste type + record the locked-in weight.
+   app.post(
+     "/bags/:qr/weigh",
+-    { preHandler: guards.requirePermission("bag:weigh"), schema: { body: WeighBody } },
++    { onRequest: guards.requirePermission("bag:weigh"), schema: { body: WeighBody } },
+     async (req) => {
+       const { qr } = req.params as { qr: string };
+       const b = req.body as Static<typeof WeighBody>;
+diff --git a/backend/src/modules/traceability/api/routes.ts b/backend/src/modules/traceability/api/routes.ts
+index f5a2e91..a9fecb8 100644
+--- a/backend/src/modules/traceability/api/routes.ts
++++ b/backend/src/modules/traceability/api/routes.ts
+@@ -25,7 +25,7 @@ export function registerTraceabilityRoutes(
+ 
+   app.get(
+     "/admin/traceability/verify/:aggregateType/:aggregateId",
+-    { preHandler: guards.requirePermission("traceability:verify") },
++    { onRequest: guards.requirePermission("traceability:verify") },
+     async (req) => {
+       const { aggregateType, aggregateId } = req.params as {
+         aggregateType: string;
+diff --git a/backend/src/settings.ts b/backend/src/settings.ts
+index d7147ff..bd09239 100644
+--- a/backend/src/settings.ts
++++ b/backend/src/settings.ts
+@@ -19,6 +19,10 @@ export interface Settings {
+   accessTokenTtlSeconds: number;
+   refreshTokenTtlDays: number;
+   corsOrigins: string[];
++  /** Number of reverse-proxy hops to trust for req.ip (0 = none). Behind Render use 1. */
++  trustProxyHops: number;
++  /** Per-IP/minute cap on credential endpoints (login, register, change-password…). */
++  authRateLimitMax: number;
+   allowCitizenSelfRegistration: boolean;
+   demoMode: boolean;
+ }
+@@ -96,6 +100,8 @@ export function loadSettings(): Settings {
+     accessTokenTtlSeconds: int("ACCESS_TOKEN_TTL_SECONDS", 900, 60, 86400),
+     refreshTokenTtlDays: int("REFRESH_TOKEN_TTL_DAYS", 14, 1, 365),
+     corsOrigins,
++    trustProxyHops: int("TRUST_PROXY_HOPS", 0, 0, 5),
++    authRateLimitMax: int("AUTH_RATE_LIMIT_PER_MINUTE", 10, 1, 100_000),
+     allowCitizenSelfRegistration: bool("ALLOW_CITIZEN_SELF_REGISTRATION", true),
+     demoMode: bool("DEMO_MODE", false)
+   };
+diff --git a/backend/src/shared/http/middleware.ts b/backend/src/shared/http/middleware.ts
+index 4f2c4f2..0585247 100644
+--- a/backend/src/shared/http/middleware.ts
++++ b/backend/src/shared/http/middleware.ts
+@@ -6,11 +6,13 @@ import type { FastifyReply, FastifyRequest } from "fastify";
+ import { DomainError, unauthorized } from "../errors.js";
+ import { permissionsForRole, roleHas, type Permission, type Role } from "../../modules/identity/domain/permissions.js";
+ import type { TokenService } from "../../modules/identity/application/token-service.js";
++import type { SessionValidator } from "../../modules/identity/application/session-validator.js";
+ 
+ export interface AuthUser {
+   id: string;
+   role: Role;
+   sessionId: string;
++  displayName: string;
+   permissions: readonly Permission[];
+ }
+ 
+@@ -31,23 +33,28 @@ export interface AuthGuards {
+   optionalAuth(req: FastifyRequest): Promise<AuthUser | null>;
+ }
+ 
+-export function createAuthGuards(tokens: TokenService): AuthGuards {
++export function createAuthGuards(tokens: TokenService, sessions: SessionValidator): AuthGuards {
+   async function extractUser(req: FastifyRequest): Promise<AuthUser | null> {
+     const header = req.headers.authorization;
+     if (!header?.startsWith("Bearer ")) return null;
+     const token = header.slice(7).trim();
+     if (!token) return null;
++    let claims;
+     try {
+-      const claims = await tokens.verifyAccessToken(token);
+-      return {
+-        id: claims.sub,
+-        role: claims.role,
+-        sessionId: claims.sid,
+-        permissions: permissionsForRole(claims.role)
+-      };
++      claims = await tokens.verifyAccessToken(token);
+     } catch {
+       throw unauthorized("invalid or expired access token");
+     }
++    // A valid signature is not enough: confirm the session/user are still live.
++    const live = await sessions.validate({ sub: claims.sub, sid: claims.sid, role: claims.role });
++    if (!live) throw unauthorized("session is no longer valid");
++    return {
++      id: claims.sub,
++      role: claims.role,
++      sessionId: claims.sid,
++      displayName: live.displayName,
++      permissions: permissionsForRole(claims.role)
++    };
+   }
+ 
+   return {
+diff --git a/backend/src/shared/http/problem-details.ts b/backend/src/shared/http/problem-details.ts
+index c313300..87d60f0 100644
+--- a/backend/src/shared/http/problem-details.ts
++++ b/backend/src/shared/http/problem-details.ts
+@@ -93,6 +93,30 @@ export function problemDetails(
+     return reply.status(400).send(problem);
+   }
+ 
++  // Framework / plugin client errors (rate-limit 429, malformed JSON 400,
++  // oversized body 413, wrong content-type 415…). They carry their own 4xx
++  // status; answering 500 would hide the real cause from clients and page
++  // whoever watches error logs for what is just a throttled request.
++  const raw = err as { statusCode?: unknown; status?: unknown } | null;
++  const clientStatus = [raw?.statusCode, raw?.status].find(
++    (v): v is number => typeof v === "number" && v >= 400 && v < 500
++  );
++  if (clientStatus !== undefined) {
++    const code = (
++      clientStatus === 429 ? "rate_limited" : clientStatus === 404 ? "not_found" : "validation_error"
++    ) as ProblemDetails["code"];
++    const problem: ProblemDetails = {
++      type: `https://waste-platform/errors/${code}`,
++      title: "خطأ في الطلب",
++      status: clientStatus,
++      code,
++      detail: ERROR_MESSAGES_AR[code] ?? "طلب غير صالح",
++      instance: req.url.split("?")[0],
++      requestId
++    };
++    return reply.status(clientStatus).send(problem);
++  }
++
+   // Unknown error — log server-side only, generic message to client.
+   req.log.error({ err, requestId }, "unhandled error");
+   const problem: ProblemDetails = {
+diff --git a/backend/tests/e2e/full-journey.ts b/backend/tests/e2e/full-journey.ts
+index 532008d..485fdda 100644
+--- a/backend/tests/e2e/full-journey.ts
++++ b/backend/tests/e2e/full-journey.ts
+@@ -126,12 +126,12 @@ async function main(): Promise<void> {
+   const deletedWasteType = await call(manager, "DELETE", "/admin/waste-types/E2E_GLASS");
+   check("manager deactivates waste type", deletedWasteType.status === 200 && deletedWasteType.json.active === false);
+   const newAddon = await call(manager, "POST", "/admin/addons", {
+-    code: "E2E_BONUS", nameAr: "حافز اختبار", nameEn: "Test bonus", bonusPercent: "2.50", appliesTo: ["PET_2L"]
++    code: "TEST_BONUS", nameAr: "حافز اختبار", nameEn: "Test bonus", bonusPercent: "2.50", appliesTo: ["PET_2L"]
+   });
+   check("manager creates addon", newAddon.status === 200 || newAddon.status === 201);
+-  const updatedAddon = await call(manager, "PATCH", "/admin/addons/E2E_BONUS", { bonusPercent: "3.00", appliesTo: ["HDPE"] });
++  const updatedAddon = await call(manager, "PATCH", "/admin/addons/TEST_BONUS", { bonusPercent: "3.00", appliesTo: ["HDPE"] });
+   check("manager updates addon", updatedAddon.status === 200 && updatedAddon.json.bonusPercent === "3.00");
+-  const deletedAddon = await call(manager, "DELETE", "/admin/addons/E2E_BONUS");
++  const deletedAddon = await call(manager, "DELETE", "/admin/addons/TEST_BONUS");
+   check("manager deactivates addon", deletedAddon.status === 200 && deletedAddon.json.active === false);
+ 
+   const est = await call(citizen, "POST", "/pricing/estimate", {
+diff --git a/backend/tests/security/session-and-access.test.ts b/backend/tests/security/session-and-access.test.ts
+new file mode 100644
+index 0000000..b223a60
+--- /dev/null
++++ b/backend/tests/security/session-and-access.test.ts
+@@ -0,0 +1,461 @@
++/* eslint-disable @typescript-eslint/no-explicit-any */
++/**
++ * SECURITY SUITE — sessions, role separation, object-level isolation.
++ * Runs in-process against a REAL PostgreSQL (needs DATABASE_URL + demo seed):
++ *   pnpm db:migrate && pnpm db:seed && pnpm db:seed:demo && pnpm test:security
++ */
++import { afterAll, beforeAll, describe, expect, it } from "vitest";
++import { sql } from "drizzle-orm";
++import type { FastifyInstance } from "fastify";
++import { createApp } from "../../src/main.js";
++import { closeDb, getDb } from "../../src/shared/db/client.js";
++import { loadSettings } from "../../src/settings.js";
++
++const DEMO_PASSWORD = "Demo@12345!";
++const STRONG = "Str0ng!Passw0rd";
++const RUN = Date.now().toString(36);
++
++let app: FastifyInstance;
++let seq = 0;
++
++interface Session {
++  token: string;
++  cookie: string;
++  userId: string;
++}
++
++async function call(
++  method: string,
++  url: string,
++  opts: { token?: string; cookie?: string; body?: unknown } = {}
++) {
++  const headers: Record<string, string> = {};
++  if (opts.token) headers["authorization"] = `Bearer ${opts.token}`;
++  if (opts.cookie) headers["cookie"] = `waste_refresh=${opts.cookie}`;
++  const res = await app.inject({
++    method: method as never,
++    url: `/api/v1${url}`,
++    headers,
++    payload: opts.body as never
++  });
++  let json: any = null;
++  try {
++    json = res.json();
++  } catch {
++    /* empty body */
++  }
++  return {
++    status: res.statusCode,
++    json,
++    cookie: res.cookies.find((c) => c.name === "waste_refresh")?.value
++  };
++}
++
++async function login(identifier: string, password = DEMO_PASSWORD): Promise<Session> {
++  const r = await call("POST", "/auth/login", { body: { identifier, password } });
++  if (r.status !== 200) throw new Error(`login ${identifier} → ${r.status} ${JSON.stringify(r.json)}`);
++  return { token: r.json.accessToken, cookie: r.cookie!, userId: r.json.user.id };
++}
++
++let manager: Session;
++
++async function createUser(role: string, serviceAreaId?: string) {
++  const email = `sec.${role}.${RUN}.${++seq}@example.test`;
++  const r = await call("POST", "/admin/accounts", {
++    token: manager.token,
++    body: { displayName: `اختبار ${role}`, email, password: STRONG, role, serviceAreaId }
++  });
++  if (r.status !== 201) throw new Error(`createUser ${role} → ${r.status} ${JSON.stringify(r.json)}`);
++  return { id: r.json.userId as string, email };
++}
++
++beforeAll(async () => {
++  // High limit here: this suite logs in dozens of times from one address.
++  // The limiter itself is exercised by dedicated apps in the last describe.
++  ({ app } = await createApp({ settings: { ...loadSettings(), authRateLimitMax: 100_000 } }));
++  await app.ready();
++  manager = await login("demo.manager@example.test");
++});
++
++afterAll(async () => {
++  await app.close();
++  await closeDb();
++});
++
++// ─────────────────────────────────────────────────────────────────────────
++describe("sessions — revocation must take effect immediately", () => {
++  it("a disabled account's live access token is rejected at once", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(200);
++
++    const dis = await call("PATCH", `/admin/accounts/${u.id}/status`, {
++      token: manager.token,
++      body: { status: "disabled" }
++    });
++    expect(dis.status).toBe(200);
++
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(401);
++    expect((await call("GET", "/finance/ledger", { token: s.token })).status).toBe(401);
++    expect((await call("POST", "/auth/refresh", { cookie: s.cookie })).status).toBe(401);
++  });
++
++  it("logout invalidates the access token, not only the refresh token", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const out = await call("POST", "/auth/logout", { token: s.token, cookie: s.cookie });
++    expect(out.status).toBe(200);
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(401);
++    expect((await call("POST", "/auth/refresh", { cookie: s.cookie })).status).toBe(401);
++  });
++
++  it("logout still works when the access token already expired (cookie only)", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const out = await call("POST", "/auth/logout", { cookie: s.cookie }); // no Authorization header
++    expect(out.status).toBe(200);
++    expect((await call("POST", "/auth/refresh", { cookie: s.cookie })).status).toBe(401);
++  });
++
++  it("logout-all kills every other session's access token", async () => {
++    const u = await createUser("finance");
++    const a = await login(u.email, STRONG);
++    const b = await login(u.email, STRONG);
++    expect((await call("POST", "/auth/logout-all", { token: a.token })).status).toBe(200);
++    expect((await call("GET", "/auth/me", { token: b.token })).status).toBe(401);
++    expect((await call("POST", "/auth/refresh", { cookie: b.cookie })).status).toBe(401);
++  });
++
++  it("changing the password kills existing access tokens", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const other = await login(u.email, STRONG);
++    const r = await call("POST", "/auth/change-password", {
++      token: s.token,
++      body: { currentPassword: STRONG, newPassword: "N3w!Passw0rd#x" }
++    });
++    expect(r.status).toBe(200);
++    expect((await call("GET", "/auth/me", { token: other.token })).status).toBe(401);
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(401);
++  });
++
++  it("a manager resetting someone's password revokes that user's sessions", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const r = await call("PATCH", `/admin/accounts/${u.id}`, {
++      token: manager.token,
++      body: { password: "Reset!Passw0rd#1" }
++    });
++    expect(r.status).toBe(200);
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(401);
++    expect((await call("POST", "/auth/refresh", { cookie: s.cookie })).status).toBe(401);
++    await expect(login(u.email, "Reset!Passw0rd#1")).resolves.toBeTruthy();
++  });
++
++  it("a role changed in the database is not honoured from a stale token", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    expect((await call("GET", "/finance/ledger", { token: s.token })).status).toBe(200);
++    const db = getDb(loadSettings().databaseUrl);
++    await db.execute(sql`UPDATE app.users SET role = 'citizen' WHERE id = ${u.id}`);
++    expect((await call("GET", "/finance/ledger", { token: s.token })).status).toBe(401);
++  });
++
++  it("/auth/me reports fresh server-side state (name), not token contents", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    await call("PATCH", `/admin/accounts/${u.id}`, {
++      token: manager.token,
++      body: { displayName: "اسم جديد" }
++    });
++    const me = await call("GET", "/auth/me", { token: s.token });
++    expect(me.status).toBe(200);
++    expect(me.json.displayName).toBe("اسم جديد");
++    expect(me.json.role).toBe("finance");
++  });
++});
++
++// ─────────────────────────────────────────────────────────────────────────
++describe("refresh tokens — atomic single-use rotation, strict reuse detection", () => {
++  it("two concurrent refreshes with one cookie never produce two live descendants", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const [r1, r2] = await Promise.all([
++      call("POST", "/auth/refresh", { cookie: s.cookie }),
++      call("POST", "/auth/refresh", { cookie: s.cookie })
++    ]);
++    // Fail safe: a second holder of one token is indistinguishable from theft.
++    expect([r1, r2].filter((r) => r.status === 200).length).toBeLessThanOrEqual(1);
++    const db = getDb(loadSettings().databaseUrl);
++    const live = await db.execute(
++      sql`SELECT count(*)::int AS n FROM app.refresh_tokens
++           WHERE user_id = ${u.id} AND revoked_at IS NULL`
++    );
++    expect((live.rows[0] as { n: number }).n).toBeLessThanOrEqual(1);
++  });
++
++  it("replaying a rotated token revokes ALL sessions of the user (theft signal)", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const other = await login(u.email, STRONG);
++    const rotated = await call("POST", "/auth/refresh", { cookie: s.cookie });
++    expect(rotated.status).toBe(200);
++    const replay = await call("POST", "/auth/refresh", { cookie: s.cookie });
++    expect(replay.status).toBe(401);
++    expect(replay.json.code).toBe("refresh_reuse_detected");
++    expect((await call("POST", "/auth/refresh", { cookie: rotated.cookie })).status).toBe(401);
++    expect((await call("POST", "/auth/refresh", { cookie: other.cookie })).status).toBe(401);
++    expect((await call("GET", "/auth/me", { token: rotated.json.accessToken })).status).toBe(401);
++  });
++
++  it("replaying a LOGGED-OUT cookie is a plain 401 and does not sign out other devices", async () => {
++    const u = await createUser("finance");
++    const a = await login(u.email, STRONG);
++    const b = await login(u.email, STRONG);
++    await call("POST", "/auth/logout", { cookie: a.cookie });
++    const stale = await call("POST", "/auth/refresh", { cookie: a.cookie });
++    expect(stale.status).toBe(401);
++    expect(stale.json.code).not.toBe("refresh_reuse_detected");
++    expect((await call("GET", "/auth/me", { token: b.token })).status).toBe(200);
++  });
++
++  it("an old access token dies when its rotated chain is later logged out", async () => {
++    const u = await createUser("finance");
++    const s = await login(u.email, STRONG);
++    const rotated = await call("POST", "/auth/refresh", { cookie: s.cookie });
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(200); // pre-rotation token still fine
++    await call("POST", "/auth/logout", { cookie: rotated.cookie });
++    expect((await call("GET", "/auth/me", { token: s.token })).status).toBe(401); // …but not after logout
++  });
++});
++
++// ─────────────────────────────────────────────────────────────────────────
++describe("role separation — HTTP level (role × endpoint)", () => {
++  const ROLES = ["citizen", "collector", "authority", "sorter", "finance", "manager"] as const;
++  // Independent statement of intent — NOT derived from ROLE_PERMISSIONS.
++  const MATRIX: Record<string, readonly (typeof ROLES)[number][]> = {
++    "/admin/accounts": ["manager"],
++    "/admin/audit": ["manager"],
++    "/admin/settings": ["manager"],
++    "/admin/service-areas": ["manager"],
++    "/admin/waste-types": ["manager"],
++    "/admin/invitations": ["manager"],
++    "/shipments": ["sorter", "finance", "manager"],
++    "/invoices": ["finance", "manager"],
++    "/finance/ledger": ["finance", "manager"],
++    "/payouts": ["finance", "manager"],
++    "/me/payouts": ["citizen", "collector"],
++    "/collector/schedule": ["collector", "manager"],
++    "/requests": [...ROLES],
++    "/citizen/dashboard": ["citizen"],
++    "/collector/dashboard": ["collector"],
++    "/authority/dashboard": ["authority"],
++    "/sorter/dashboard": ["sorter"],
++    "/finance/dashboard": ["finance"],
++    "/manager/dashboard": ["manager"]
++  };
++  const sessions = new Map<string, Session>();
++
++  beforeAll(async () => {
++    for (const r of ROLES) sessions.set(r, await login(`demo.${r}@example.test`));
++  });
++
++  for (const [path, allowed] of Object.entries(MATRIX)) {
++    it(`GET ${path}: anonymous→401, allowed=[${allowed.join(",")}], everyone else→403`, async () => {
++      expect((await call("GET", path)).status).toBe(401);
++      for (const role of ROLES) {
++        const res = await call("GET", path, { token: sessions.get(role)!.token });
++        if (allowed.includes(role)) {
++          expect(res.status, `${role} should reach ${path}`).toBe(200);
++        } else {
++          expect(res.status, `${role} must NOT reach ${path}`).toBe(403);
++        }
++      }
++    });
++  }
++
++  it("guards run BEFORE body validation: no schema details leak to the unauthorised", async () => {
++    const anon = await call("POST", "/admin/waste-types", { body: {} });
++    expect(anon.status).toBe(401);
++    const citizen = await call("POST", "/admin/waste-types", {
++      token: sessions.get("citizen")!.token,
++      body: {}
++    });
++    expect(citizen.status).toBe(403);
++    expect(JSON.stringify(citizen.json)).not.toMatch(/must have required|validation/i);
++  });
++
++  it("privileged writes are closed to non-managers", async () => {
++    const attempts: [string, string, unknown][] = [
++      ["POST", "/admin/accounts", { displayName: "x y", email: `a${RUN}@example.test`, password: STRONG, role: "manager" }],
++      ["PATCH", "/admin/settings", {}],
++      ["POST", "/admin/invitations", { email: `i${RUN}@example.test`, role: "manager" }],
++      ["POST", "/admin/waste-types", {}]
++    ];
++    for (const role of ["citizen", "collector", "authority", "sorter", "finance"] as const) {
++      for (const [m, p, b] of attempts) {
++        const res = await call(m, p, { token: sessions.get(role)!.token, body: b });
++        expect(res.status, `${role} ${m} ${p}`).toBe(403);
++      }
++    }
++  });
++});
++
++// ─────────────────────────────────────────────────────────────────────────
++describe("object-level isolation (IDOR)", () => {
++  let citizenA: Session;
++  let requestId: string;
++  let requestAreaId: string;
++  let otherAreaId: string;
++
++  beforeAll(async () => {
++    citizenA = await login("demo.citizen@example.test");
++    const created = await call("POST", "/requests", {
++      token: citizenA.token,
++      body: { lines: [{ wasteTypeCode: "PET_2L", quantity: "10" }] }
++    });
++    expect(created.status).toBe(200);
++    requestId = created.json.requestId ?? created.json.id ?? created.json.request?.id;
++    expect(requestId).toBeTruthy();
++
++    const detail = await call("GET", `/requests/${requestId}`, { token: manager.token });
++    requestAreaId = detail.json.request.serviceAreaId;
++    const areas = await call("GET", "/admin/service-areas", { token: manager.token });
++    otherAreaId = areas.json.items.find((a: any) => a.id !== requestAreaId).id;
++  });
++
++  it("another citizen cannot read or list someone else's request (404, not 403)", async () => {
++    const u = await createUser("citizen", requestAreaId);
++    const b = await login(u.email, STRONG);
++    expect((await call("GET", `/requests/${requestId}`, { token: b.token })).status).toBe(404);
++    const list = await call("GET", "/requests?page=1&pageSize=100", { token: b.token });
++    expect(list.status).toBe(200);
++    expect(list.json.items.map((i: any) => i.id)).not.toContain(requestId);
++  });
++
++  it("another citizen cannot transition someone else's request", async () => {
++    const u = await createUser("citizen", requestAreaId);
++    const b = await login(u.email, STRONG);
++    const r = await call("POST", `/requests/${requestId}/transitions`, {
++      token: b.token,
++      body: { target: "sent_to_collector", expectedVersion: 1 }
++    });
++    expect([403, 404]).toContain(r.status);
++  });
++
++  it("an authority of ANOTHER area cannot see or act on the request", async () => {
++    const u = await createUser("authority", otherAreaId);
++    const a = await login(u.email, STRONG);
++    expect((await call("GET", `/requests/${requestId}`, { token: a.token })).status).toBe(404);
++    const t = await call("POST", `/requests/${requestId}/transitions`, {
++      token: a.token,
++      body: { target: "sent_to_collector", expectedVersion: 1 }
++    });
++    expect(t.status).toBe(404);
++    const list = await call("GET", "/requests?page=1&pageSize=100", { token: a.token });
++    expect(list.json.items.map((i: any) => i.id)).not.toContain(requestId);
++  });
++
++  it("a collector cannot see a request that is not in their queue", async () => {
++    const u = await createUser("collector", otherAreaId);
++    const c = await login(u.email, STRONG);
++    expect((await call("GET", `/requests/${requestId}`, { token: c.token })).status).toBe(404);
++  });
++
++  it("anonymous callers get 401 on request detail", async () => {
++    expect((await call("GET", `/requests/${requestId}`)).status).toBe(401);
++  });
++
++  it("the public tracking endpoint exposes no identities or money", async () => {
++    const detail = await call("GET", `/requests/${requestId}`, { token: citizenA.token });
++    const hash = detail.json.request.combinedHash;
++    expect(hash).toBeTruthy();
++    const t = await call("GET", `/track/${hash}`);
++    expect(t.status).toBe(200);
++    const blob = JSON.stringify(t.json);
++    expect(blob).not.toMatch(/demo\.citizen|@example|phone|weight|amount|citizenUserId/i);
++  });
++});
++
++// ─────────────────────────────────────────────────────────────────────────
++describe("transport & abuse controls", () => {
++  it("authenticated API responses are never cacheable", async () => {
++    const res = await app.inject({
++      method: "GET",
++      url: "/api/v1/auth/me",
++      headers: { authorization: `Bearer ${manager.token}` }
++    });
++    expect(res.headers["cache-control"]).toBe("no-store");
++    const bad = await app.inject({ method: "GET", url: "/api/v1/auth/me" });
++    expect(bad.headers["cache-control"]).toBe("no-store");
++  });
++
++  it("the refresh cookie is HttpOnly + SameSite=Strict, scoped to /api/v1/auth", async () => {
++    const res = await app.inject({
++      method: "POST",
++      url: "/api/v1/auth/login",
++      payload: { identifier: "demo.citizen@example.test", password: DEMO_PASSWORD }
++    });
++    const c = String(res.headers["set-cookie"]);
++    expect(c).toMatch(/HttpOnly/i);
++    expect(c).toMatch(/SameSite=Strict/i);
++    expect(c).toMatch(/Path=\/api\/v1\/auth/);
++  });
++
++  it("login is rate-limited per client IP", async () => {
++    const { app: limited } = await createApp({
++      settings: { ...loadSettings(), authRateLimitMax: 3 }
++    });
++    await limited.ready();
++    const codes: number[] = [];
++    for (let i = 0; i < 6; i++) {
++      const r = await limited.inject({
++        method: "POST",
++        url: "/api/v1/auth/login",
++        payload: { identifier: `nobody${i}@example.test`, password: "x" }
++      });
++      codes.push(r.statusCode);
++    }
++    await limited.close();
++    expect(codes.slice(0, 3).every((c) => c === 401)).toBe(true);
++    expect(codes.slice(3).every((c) => c === 429)).toBe(true);
++  });
++
++  it("behind a trusted proxy each client IP gets its OWN rate-limit bucket", async () => {
++    const { app: proxied } = await createApp({
++      settings: { ...loadSettings(), authRateLimitMax: 2, trustProxyHops: 1 }
++    });
++    await proxied.ready();
++    const hit = (ip: string) =>
++      proxied.inject({
++        method: "POST",
++        url: "/api/v1/auth/login",
++        headers: { "x-forwarded-for": ip },
++        payload: { identifier: "nobody@example.test", password: "x" }
++      });
++    await hit("203.0.113.1");
++    await hit("203.0.113.1");
++    expect((await hit("203.0.113.1")).statusCode).toBe(429); // client 1 exhausted
++    expect((await hit("203.0.113.2")).statusCode).toBe(401); // client 2 unaffected
++    await proxied.close();
++  });
++
++  it("WITHOUT trusted hops a spoofed X-Forwarded-For cannot dodge the limit", async () => {
++    const { app: direct } = await createApp({
++      settings: { ...loadSettings(), authRateLimitMax: 2, trustProxyHops: 0 }
++    });
++    await direct.ready();
++    const codes: number[] = [];
++    for (let i = 0; i < 4; i++) {
++      const r = await direct.inject({
++        method: "POST",
++        url: "/api/v1/auth/login",
++        headers: { "x-forwarded-for": `198.51.100.${i}` },
++        payload: { identifier: "nobody@example.test", password: "x" }
++      });
++      codes.push(r.statusCode);
++    }
++    await direct.close();
++    expect(codes.slice(2)).toEqual([429, 429]);
++  });
++});
+diff --git a/deploy/render.yaml b/deploy/render.yaml
+index 302b564..e977f4e 100644
+--- a/deploy/render.yaml
++++ b/deploy/render.yaml
+@@ -37,6 +37,10 @@ services:
+         value: "14"
+       - key: CORS_ORIGINS
+         value: "" # same-origin SPA — no CORS needed
++      - key: TRUST_PROXY_HOPS
++        value: "1" # Render terminates TLS in front of the service — verify auth_events.ip after deploy
++      - key: AUTH_RATE_LIMIT_PER_MINUTE
++        value: "10"
+       - key: ALLOW_CITIZEN_SELF_REGISTRATION
+         value: "true"
+       - key: DEMO_MODE
+diff --git a/web/src/app/guards.tsx b/web/src/app/guards.tsx
+index c99217c..246844b 100644
+--- a/web/src/app/guards.tsx
++++ b/web/src/app/guards.tsx
+@@ -16,8 +16,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
+ 
+ export function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
+   const { user, ready } = useSession();
++  const location = useLocation();
+   if (!ready) return <Loading />;
+-  if (!user) return <Navigate to="/login" replace />;
++  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+   if (user.role !== role) return <Navigate to="/forbidden" replace />;
+   return <>{children}</>;
+ }
+diff --git a/web/src/app/query-client.test.ts b/web/src/app/query-client.test.ts
+new file mode 100644
+index 0000000..9e4cc21
+--- /dev/null
++++ b/web/src/app/query-client.test.ts
+@@ -0,0 +1,32 @@
++import { describe, expect, it } from "vitest";
++import type { Query } from "@tanstack/react-query";
++import { POLL_BACKOFF_MS, POLL_MS, createQueryClient, pollInterval } from "./query-client.js";
++
++const q = (status: "success" | "error") => ({ state: { status } }) as unknown as Query;
++
++describe("query client — live data defaults", () => {
++  it("polls every query on an interval, on focus and on reconnect", () => {
++    const d = createQueryClient().getDefaultOptions().queries!;
++    expect(d.refetchInterval).toBe(pollInterval);
++    expect(d.refetchOnWindowFocus).toBe(true);
++    expect(d.refetchOnReconnect).toBe(true);
++  });
++
++  it("never polls a hidden tab", () => {
++    expect(createQueryClient().getDefaultOptions().queries!.refetchIntervalInBackground).toBe(false);
++  });
++
++  it("uses the normal rate when healthy and backs off after an error", () => {
++    expect(pollInterval(q("success"))).toBe(POLL_MS);
++    expect(pollInterval(q("error"))).toBe(POLL_BACKOFF_MS);
++    expect(POLL_BACKOFF_MS).toBeGreaterThan(POLL_MS);
++  });
++
++  it("slows down reference data and the rate-limited public tracker", () => {
++    const c = createQueryClient();
++    expect(c.getQueryDefaults(["catalog"]).refetchInterval).toBe(60_000);
++    const track = c.getQueryDefaults(["track", "abc"]).refetchInterval as number;
++    // server allows 20/min per IP; one poll per 30 s keeps a shared NAT well under that
++    expect(track).toBeGreaterThanOrEqual(30_000);
++  });
++});
+diff --git a/web/src/app/query-client.ts b/web/src/app/query-client.ts
+new file mode 100644
+index 0000000..21f998b
+--- /dev/null
++++ b/web/src/app/query-client.ts
+@@ -0,0 +1,36 @@
++/**
++ * Live data by default: every query re-fetches on an interval, on tab focus
++ * and when the network returns — so no page needs a manual reload.
++ *  • Polling pauses in a hidden tab (react-query default) — no wasted load.
++ *  • After a failed fetch we back off instead of hammering a struggling API.
++ *  • Static or public data opts out / slows down with an explicit per-query
++ *    `refetchInterval` (e.g. the catalog, or the rate-limited public tracker).
++ */
++import { QueryClient, type Query } from "@tanstack/react-query";
++
++export const POLL_MS = 20_000;
++export const POLL_BACKOFF_MS = 60_000;
++
++export function pollInterval(query: Query): number {
++  return query.state.status === "error" ? POLL_BACKOFF_MS : POLL_MS;
++}
++
++export function createQueryClient(): QueryClient {
++  const client = new QueryClient({
++    defaultOptions: {
++      queries: {
++        retry: 1,
++        staleTime: 10_000,
++        refetchInterval: pollInterval,
++        refetchIntervalInBackground: false,
++        refetchOnWindowFocus: true,
++        refetchOnReconnect: true
++      }
++    }
++  });
++  // Rarely-changing reference data: slow poll (also keeps form selects calm).
++  client.setQueryDefaults(["catalog"], { refetchInterval: 60_000 });
++  // Public tracker is capped at 20 req/min per IP server-side: stay well below.
++  client.setQueryDefaults(["track"], { refetchInterval: 30_000 });
++  return client;
++}
+diff --git a/web/src/app/session.tsx b/web/src/app/session.tsx
+index 06f58e7..361ff05 100644
+--- a/web/src/app/session.tsx
++++ b/web/src/app/session.tsx
+@@ -1,6 +1,11 @@
+ /**
+  * Session context — access token in memory only (never localStorage).
+  * On boot, attempts silent refresh to restore the session.
++ *
++ * Live session: while signed in we re-read /auth/me every HEARTBEAT_MS (and
++ * on tab focus / network return). The server answers from the database, so a
++ * disabled account, a revoked session or a changed role is noticed within
++ * seconds and the route guards react on their own — no manual reload.
+  */
+ import {
+   createContext,
+@@ -12,7 +17,7 @@ import {
+   useState,
+   type ReactNode
+ } from "react";
+-import { bindSession } from "../shared/api/client.js";
++import { authFetch, bindSession, refreshAccessToken } from "../shared/api/client.js";
+ 
+ export type Role = "citizen" | "collector" | "authority" | "sorter" | "finance" | "manager";
+ 
+@@ -34,6 +39,19 @@ interface SessionState {
+ 
+ const SessionContext = createContext<SessionState | null>(null);
+ 
++const HEARTBEAT_MS = 30_000;
++const CHANNEL = "waste-auth";
++
++function sameUser(a: CurrentUser, b: CurrentUser): boolean {
++  return (
++    a.id === b.id &&
++    a.role === b.role &&
++    a.displayName === b.displayName &&
++    a.permissions.length === b.permissions.length &&
++    a.permissions.every((p, i) => p === b.permissions[i])
++  );
++}
++
+ export function SessionProvider({ children }: { children: ReactNode }) {
+   const [user, setUser] = useState<CurrentUser | null>(null);
+   const [ready, setReady] = useState(false);
+@@ -71,38 +89,52 @@ export function SessionProvider({ children }: { children: ReactNode }) {
+     });
+   }, []);
+ 
++  const channelRef = useRef<BroadcastChannel | null>(null);
++
+   const logout = useCallback(async () => {
+     try {
+-      await fetch("/api/v1/auth/logout", {
+-        method: "POST",
+-        headers: tokenRef.current ? { authorization: `Bearer ${tokenRef.current}` } : {}
+-      });
++      // Cookie alone is enough server-side (works even with an expired token).
++      await fetch("/api/v1/auth/logout", { method: "POST" });
+     } catch {
+       // best-effort — cookie cleared server-side; ignore network errors
+     }
+     tokenRef.current = null;
+     setUser(null);
++    channelRef.current?.postMessage({ type: "logout" });
++  }, []);
++
++  // Sign the other tabs out too (their session was just revoked server-side).
++  useEffect(() => {
++    if (typeof BroadcastChannel === "undefined") return;
++    const ch = new BroadcastChannel(CHANNEL);
++    channelRef.current = ch;
++    ch.onmessage = (e: MessageEvent<{ type?: string }>) => {
++      if (e.data?.type === "logout") {
++        tokenRef.current = null;
++        setUser(null);
++      }
++    };
++    return () => {
++      ch.close();
++      channelRef.current = null;
++    };
+   }, []);
+ 
+   // Silent session restore on boot (refresh cookie → access token → /auth/me).
++  // refreshAccessToken() is single-flight, so React StrictMode's double
++  // effect cannot fire two refreshes with one cookie (which the server would
++  // read as token theft and answer by revoking every session).
+   useEffect(() => {
+     let cancelled = false;
+     (async () => {
+       try {
+-        const res = await fetch("/api/v1/auth/refresh", { method: "POST" });
+-        if (res.ok) {
+-          const body = (await res.json()) as { accessToken?: string };
+-          if (body.accessToken && !cancelled) {
+-            tokenRef.current = body.accessToken;
+-            const me = await fetch("/api/v1/auth/me", {
+-              headers: { authorization: `Bearer ${body.accessToken}` }
+-            });
+-            if (me.ok) {
+-              const meBody = (await me.json()) as { id: string; role: Role; permissions: string[] };
+-              if (!cancelled) {
+-                setUser({ id: meBody.id, role: meBody.role, permissions: meBody.permissions });
+-              }
+-            }
++        const token = await refreshAccessToken();
++        if (token && !cancelled) {
++          tokenRef.current = token;
++          const me = await authFetch("/api/v1/auth/me");
++          if (me.ok && !cancelled) {
++            const b = (await me.json()) as CurrentUser;
++            setUser({ id: b.id, role: b.role, displayName: b.displayName, permissions: b.permissions });
+           }
+         }
+       } catch {
+@@ -116,6 +148,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
+     };
+   }, []);
+ 
++  // Heartbeat: keep role / status / name in step with the server.
++  const signedIn = user !== null;
++  useEffect(() => {
++    if (!signedIn) return;
++    let stopped = false;
++    const check = async () => {
++      if (stopped || !tokenRef.current || document.visibilityState === "hidden") return;
++      try {
++        const res = await authFetch("/api/v1/auth/me");
++        if (!res.ok || stopped || !tokenRef.current) return; // 401 already ended the session
++        const b = (await res.json()) as CurrentUser;
++        const next: CurrentUser = {
++          id: b.id,
++          role: b.role,
++          displayName: b.displayName,
++          permissions: b.permissions
++        };
++        setUser((prev) => (prev && sameUser(prev, next) ? prev : next));
++      } catch {
++        // offline / transient — try again on the next beat
++      }
++    };
++    const timer = setInterval(() => void check(), HEARTBEAT_MS);
++    const wake = () => void check();
++    document.addEventListener("visibilitychange", wake);
++    window.addEventListener("online", wake);
++    window.addEventListener("focus", wake);
++    return () => {
++      stopped = true;
++      clearInterval(timer);
++      document.removeEventListener("visibilitychange", wake);
++      window.removeEventListener("online", wake);
++      window.removeEventListener("focus", wake);
++    };
++  }, [signedIn]);
++
+   const value = useMemo(
+     () => ({ user, ready, login, logout, getAccessToken, setAccessToken }),
+     [user, ready, login, logout, getAccessToken, setAccessToken]
+diff --git a/web/src/features/authority/authority-pages.tsx b/web/src/features/authority/authority-pages.tsx
+index 5f06f7f..c1e346b 100644
+--- a/web/src/features/authority/authority-pages.tsx
++++ b/web/src/features/authority/authority-pages.tsx
+@@ -110,7 +110,7 @@ export function AuthorityDashboard(): React.ReactNode {
+     queryFn: async () => (await api.GET("/authority/dashboard")).data as unknown as AuthorityDashboardData | undefined
+   });
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+ 
+   const refresh = () => void qc.invalidateQueries({ queryKey: ["authority-dashboard"] });
+@@ -170,7 +170,7 @@ export function AuthorityRequests(): React.ReactNode {
+     queryFn: async () => (await api.GET("/requests", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as RequestsListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.requests} /><EmptyState /></>;
+   return (
+     <>
+@@ -205,7 +205,7 @@ export function AuthorityRequestDetail(): React.ReactNode {
+   });
+   if (!id) return <ErrorState />;
+   if (detail.isLoading) return <Loading />;
+-  if (detail.isError || !detail.data) return <ErrorState />;
++  if (!detail.data) return <ErrorState />;
+   const d = detail.data;
+   const next = nextStepFor(d.request.status);
+   return (
+diff --git a/web/src/features/citizen/citizen-pages.tsx b/web/src/features/citizen/citizen-pages.tsx
+index b1abde1..4661e11 100644
+--- a/web/src/features/citizen/citizen-pages.tsx
++++ b/web/src/features/citizen/citizen-pages.tsx
+@@ -30,7 +30,7 @@ export function CitizenDashboard(): React.ReactNode {
+   });
+ 
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+ 
+   return (
+@@ -104,7 +104,7 @@ export function CitizenRequests(): React.ReactNode {
+     queryFn: async () => (await api.GET("/requests", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as RequestsListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) {
+     return (
+       <div className="eco-citizen">
+@@ -222,7 +222,7 @@ export function NewCitizenRequest(): React.ReactNode {
+   });
+ 
+   if (catalog.isLoading) return <Loading />;
+-  if (catalog.isError || !catalog.data) return <ErrorState />;
++  if (!catalog.data) return <ErrorState />;
+ 
+   if (created) {
+     return (
+@@ -401,7 +401,7 @@ export function CitizenRequestDetail(): React.ReactNode {
+     queryFn: async () => (await api.GET("/requests/{id}", { params: { path: { id: id! } } })).data as unknown as RequestDetailData | undefined
+   });
+   if (detail.isLoading) return <Loading />;
+-  if (detail.isError || !detail.data) return <ErrorState />;
++  if (!detail.data) return <ErrorState />;
+   const d = detail.data;
+ 
+   return (
+@@ -478,7 +478,7 @@ export function CitizenPayouts(): React.ReactNode {
+     queryFn: async () => (await api.GET("/me/payouts", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as PayoutsData | undefined
+   });
+   if (payouts.isLoading) return <Loading />;
+-  if (payouts.isError || !payouts.data) return <ErrorState />;
++  if (!payouts.data) return <ErrorState />;
+   if (payouts.data.items.length === 0) {
+     return (
+       <div className="eco-citizen">
+diff --git a/web/src/features/collector/collector-pages.tsx b/web/src/features/collector/collector-pages.tsx
+index e83528e..6c03915 100644
+--- a/web/src/features/collector/collector-pages.tsx
++++ b/web/src/features/collector/collector-pages.tsx
+@@ -26,7 +26,7 @@ export function CollectorDashboard(): React.ReactNode {
+     queryFn: async () => (await api.GET("/collector/dashboard")).data as unknown as CollectorDashboardData | undefined
+   });
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+   return (
+     <>
+@@ -76,7 +76,7 @@ export function CollectorSchedule(): React.ReactNode {
+     queryFn: async () => (await api.GET("/collector/schedule")).data as unknown as ScheduleData | undefined
+   });
+   if (schedule.isLoading) return <Loading />;
+-  if (schedule.isError || !schedule.data) return <ErrorState />;
++  if (!schedule.data) return <ErrorState />;
+   const s = schedule.data;
+   return (
+     <>
+@@ -139,7 +139,7 @@ export function CollectorRequests(): React.ReactNode {
+     queryFn: async () => (await api.GET("/requests", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as RequestsListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.requests} /><EmptyState /></>;
+   return (
+     <>
+@@ -175,7 +175,7 @@ export function CollectorRequestDetail(): React.ReactNode {
+   });
+   if (!id) return <ErrorState />;
+   if (detail.isLoading) return <Loading />;
+-  if (detail.isError || !detail.data) return <ErrorState />;
++  if (!detail.data) return <ErrorState />;
+   const d = detail.data;
+   const next = nextStepFor(d.request.status);
+   return (
+@@ -234,7 +234,7 @@ export function CollectorPayouts(): React.ReactNode {
+     queryFn: async () => (await api.GET("/me/payouts", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as PayoutsData | undefined
+   });
+   if (payouts.isLoading) return <Loading />;
+-  if (payouts.isError || !payouts.data) return <ErrorState />;
++  if (!payouts.data) return <ErrorState />;
+   if (payouts.data.items.length === 0) return <><PageHeader title={ar.myPayouts} /><EmptyState label="لا مستحقات بعد" /></>;
+   const total = payouts.data.items.filter((p) => p.status !== "void").reduce((acc, p) => acc + Number.parseFloat(p.amount), 0);
+   return (
+@@ -316,7 +316,7 @@ export function CollectorScan(): React.ReactNode {
+         </Card>
+       ) : schedule.isLoading ? (
+         <Loading />
+-      ) : schedule.isError || !schedule.data ? (
++      ) : !schedule.data ? (
+         <ErrorState />
+       ) : !match ? (
+         <div className="space-y-3">
+diff --git a/web/src/features/finance/finance-pages.tsx b/web/src/features/finance/finance-pages.tsx
+index 5f52c53..50d9bd9 100644
+--- a/web/src/features/finance/finance-pages.tsx
++++ b/web/src/features/finance/finance-pages.tsx
+@@ -26,7 +26,7 @@ export function FinanceDashboard(): React.ReactNode {
+     queryFn: async () => (await api.GET("/finance/dashboard")).data as unknown as FinanceDashboardData | undefined
+   });
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+   return (
+     <>
+@@ -72,7 +72,7 @@ export function FinanceInvoices(): React.ReactNode {
+     queryFn: async () => (await api.GET("/invoices", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as InvoicesListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.invoices} /><EmptyState label="لا فواتير بعد" /></>;
+   return (
+     <>
+@@ -194,7 +194,7 @@ export function InvoiceDetail(): React.ReactNode {
+ 
+   if (!id) return <ErrorState />;
+   if (detail.isLoading) return <Loading />;
+-  if (detail.isError || !detail.data) return <ErrorState />;
++  if (!detail.data) return <ErrorState />;
+   const d = detail.data;
+ 
+   const totals = d.payouts.reduce<Record<string, number>>((acc, p) => {
+@@ -253,7 +253,7 @@ export function FinancePayouts(): React.ReactNode {
+     queryFn: async () => (await api.GET("/payouts", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as PayoutsListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.payouts} /><EmptyState /></>;
+   return (
+     <>
+@@ -298,7 +298,7 @@ export function FinanceLedger(): React.ReactNode {
+     queryFn: async () => (await api.GET("/finance/ledger", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as LedgerData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.ledger} /><EmptyState /></>;
+   return (
+     <>
+diff --git a/web/src/features/manager/manager-pages.tsx b/web/src/features/manager/manager-pages.tsx
+index bb97f4b..0778512 100644
+--- a/web/src/features/manager/manager-pages.tsx
++++ b/web/src/features/manager/manager-pages.tsx
+@@ -28,7 +28,7 @@ export function ManagerDashboard(): React.ReactNode {
+     queryFn: async () => (await api.GET("/manager/dashboard")).data as unknown as ManagerDashboardData | undefined
+   });
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+   return (
+     <>
+@@ -298,7 +298,7 @@ export function ManagerAccounts(): React.ReactNode {
+   const refresh = () => void qc.invalidateQueries({ queryKey: ["accounts"] });
+ 
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+ 
+   return (
+     <>
+@@ -471,7 +471,7 @@ export function ManagerCatalog(): React.ReactNode {
+     if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حذف الإضافة");
+   }, onSuccess: refresh, onError: (err) => setError(err.message) });
+   if (catalog.isLoading) return <Loading />;
+-  if (catalog.isError || !catalog.data) return <ErrorState />;
++  if (!catalog.data) return <ErrorState />;
+   return (
+     <>
+       <PageHeader title={ar.catalog} subtitle={`${catalog.data.wasteTypes.length} نوع`} />
+@@ -772,7 +772,7 @@ export function ManagerServiceAreas(): React.ReactNode {
+   });
+ 
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+ 
+   return (
+     <>
+@@ -856,7 +856,7 @@ export function ManagerSettings(): React.ReactNode {
+   });
+ 
+   if (settings.isLoading) return <Loading />;
+-  if (settings.isError || !settings.data) return <ErrorState />;
++  if (!settings.data) return <ErrorState />;
+   const s = settings.data;
+ 
+   return (
+@@ -996,7 +996,7 @@ export function ManagerAudit(): React.ReactNode {
+     queryFn: async () => (await api.GET("/admin/audit", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as AuditData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.auditLog} /><EmptyState /></>;
+   return (
+     <>
+diff --git a/web/src/features/sorter/sorter-pages.tsx b/web/src/features/sorter/sorter-pages.tsx
+index b528020..85776e0 100644
+--- a/web/src/features/sorter/sorter-pages.tsx
++++ b/web/src/features/sorter/sorter-pages.tsx
+@@ -33,7 +33,7 @@ export function SorterDashboard(): React.ReactNode {
+     queryFn: async () => (await api.GET("/sorter/dashboard")).data as unknown as SorterDashboardData | undefined
+   });
+   if (dash.isLoading) return <Loading />;
+-  if (dash.isError || !dash.data) return <ErrorState />;
++  if (!dash.data) return <ErrorState />;
+   const d = dash.data;
+   return (
+     <>
+@@ -111,7 +111,7 @@ export function SorterShipments(): React.ReactNode {
+     queryFn: async () => (await api.GET("/shipments", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as ShipmentsListData | undefined
+   });
+   if (list.isLoading) return <Loading />;
+-  if (list.isError || !list.data) return <ErrorState />;
++  if (!list.data) return <ErrorState />;
+   if (list.data.items.length === 0) return <><PageHeader title={ar.shipments} actions={<Link to="/sorter/shipments/new"><Button>＋ {ar.newShipment}</Button></Link>} /><EmptyState /></>;
+   return (
+     <>
+@@ -256,7 +256,7 @@ export function ShipmentDetail(): React.ReactNode {
+ 
+   if (!id) return <ErrorState />;
+   if (detail.isLoading) return <Loading />;
+-  if (detail.isError || !detail.data) return <ErrorState />;
++  if (!detail.data) return <ErrorState />;
+   const d = detail.data;
+   const isOpen = d.shipment.status === "open";
+   const remaining = Number.parseFloat(d.shipment.remainingWeightKg);
+diff --git a/web/src/main.tsx b/web/src/main.tsx
+index 4927148..155502b 100644
+--- a/web/src/main.tsx
++++ b/web/src/main.tsx
+@@ -1,7 +1,8 @@
+ import { StrictMode } from "react";
+ import { createRoot } from "react-dom/client";
+ import { RouterProvider } from "react-router-dom";
+-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
++import { QueryClientProvider } from "@tanstack/react-query";
++import { createQueryClient } from "./app/query-client.js";
+ import { SessionProvider } from "./app/session.js";
+ import { router } from "./app/router.js";
+ import "./styles.css";
+@@ -9,15 +10,7 @@ import "@fontsource/cairo/400.css";
+ import "@fontsource/cairo/600.css";
+ import "@fontsource/cairo/700.css";
+ 
+-const queryClient = new QueryClient({
+-  defaultOptions: {
+-    queries: {
+-      retry: 1,
+-      staleTime: 15_000,
+-      refetchOnWindowFocus: false
+-    }
+-  }
+-});
++const queryClient = createQueryClient();
+ 
+ const root = document.getElementById("root");
+ if (!root) throw new Error("missing #root");
+diff --git a/web/src/shared/api/client.test.ts b/web/src/shared/api/client.test.ts
+new file mode 100644
+index 0000000..260838c
+--- /dev/null
++++ b/web/src/shared/api/client.test.ts
+@@ -0,0 +1,109 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++
++type Client = typeof import("./client.js");
++
++/** Fake backend: /auth/refresh hands out "fresh"; data routes accept only "fresh". */
++function installBackend(opts: { refreshOk?: boolean; fresh401?: boolean } = {}) {
++  const refreshOk = opts.refreshOk ?? true;
++  const calls = { refresh: 0, data: 0, retriedBodies: [] as string[] };
++  const fake = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
++    const isReq = typeof input === "object" && input !== null && "url" in input && "headers" in input;
++    const req = isReq ? (input as Request) : new Request(new URL(String(input), "http://localhost"), init);
++    const url = new URL(req.url);
++    if (url.pathname === "/api/v1/auth/refresh") {
++      calls.refresh++;
++      await new Promise((r) => setTimeout(r, 15)); // keep the refresh in flight
++      return refreshOk
++        ? new Response(JSON.stringify({ accessToken: "fresh" }), { status: 200 })
++        : new Response("{}", { status: 401 });
++    }
++    calls.data++;
++    const ok = req.headers.get("authorization") === "Bearer fresh" && !opts.fresh401;
++    if (ok && req.method !== "GET") calls.retriedBodies.push(await req.text());
++    return ok ? new Response(JSON.stringify({ ok: true }), { status: 200 }) : new Response("{}", { status: 401 });
++  });
++  return { fake, calls };
++}
++
++async function load(fake: ReturnType<typeof installBackend>["fake"]) {
++  vi.resetModules();
++  vi.stubGlobal("fetch", fake);
++  // openapi-fetch builds `new Request(relativeUrl)`, which Node rejects: resolve against localhost.
++  const Native = globalThis.Request;
++  vi.stubGlobal(
++    "Request",
++    class extends Native {
++      constructor(input: RequestInfo | URL, init?: RequestInit) {
++        super(typeof input === "string" ? new URL(input, "http://localhost").href : input, init);
++      }
++    }
++  );
++  const client: Client = await import("./client.js");
++  let token: string | null = "stale";
++  const session = {
++    getAccessToken: () => token,
++    setAccessToken: vi.fn((t: string | null) => {
++      token = t;
++    })
++  };
++  client.bindSession(session);
++  return { client, session };
++}
++
++describe("api client — refresh discipline", () => {
++  beforeEach(() => vi.useRealTimers());
++  afterEach(() => vi.unstubAllGlobals());
++
++  it("ten simultaneous 401s trigger exactly ONE refresh (single-flight)", async () => {
++    const { fake, calls } = installBackend();
++    const { client, session } = await load(fake);
++    const results = await Promise.all(
++      Array.from({ length: 10 }, () => client.authFetch("/api/v1/auth/me"))
++    );
++    expect(results.every((r) => r.status === 200)).toBe(true);
++    expect(calls.refresh).toBe(1);
++    expect(session.setAccessToken).toHaveBeenCalledWith("fresh");
++  });
++
++  it("typed-client requests also share the single refresh", async () => {
++    const { fake, calls } = installBackend();
++    const { client } = await load(fake);
++    const rs = await Promise.all(
++      Array.from({ length: 6 }, () => client.api.GET("/catalog" as never))
++    );
++    expect(rs.every((r) => r.response.status === 200)).toBe(true);
++    expect(calls.refresh).toBe(1);
++  });
++
++  it("a POST with a body is retried intact after refresh", async () => {
++    const { fake, calls } = installBackend();
++    const { client } = await load(fake);
++    const r = await client.api.POST("/requests" as never, { body: { hello: "world" } } as never);
++    expect(r.response.status).toBe(200);
++    expect(calls.retriedBodies).toEqual([JSON.stringify({ hello: "world" })]);
++  });
++
++  it("when refresh fails the session is ended (guards can redirect to /login)", async () => {
++    const { fake } = installBackend({ refreshOk: false });
++    const { client, session } = await load(fake);
++    const r = await client.authFetch("/api/v1/auth/me");
++    expect(r.status).toBe(401);
++    expect(session.setAccessToken).toHaveBeenCalledWith(null);
++  });
++
++  it("a fresh token that is STILL refused (disabled / revoked) also ends the session", async () => {
++    const { fake } = installBackend({ fresh401: true });
++    const { client, session } = await load(fake);
++    const r = await client.authFetch("/api/v1/auth/me");
++    expect(r.status).toBe(401);
++    expect(session.setAccessToken).toHaveBeenLastCalledWith(null);
++  });
++
++  it("a later 401 starts a NEW refresh (the in-flight slot is released)", async () => {
++    const { fake, calls } = installBackend();
++    const { client } = await load(fake);
++    await client.refreshAccessToken();
++    await client.refreshAccessToken();
++    expect(calls.refresh).toBe(2);
++  });
++});
+diff --git a/web/src/shared/api/client.ts b/web/src/shared/api/client.ts
+index 83c0244..f7b9ab9 100644
+--- a/web/src/shared/api/client.ts
++++ b/web/src/shared/api/client.ts
+@@ -1,7 +1,13 @@
+ /**
+  * Typed API client — generated from the committed OpenAPI contract.
+  * Access token lives in MEMORY ONLY; refresh travels in an HttpOnly cookie
+- * (same origin). On 401 we transparently refresh once and retry.
++ * (same origin).
++ *
++ * Refresh discipline (matters for security, not just tidiness): the server
++ * treats a second use of a rotated refresh token as THEFT and revokes every
++ * session of the user. So the client must never have two refreshes in flight
++ *   • in one tab  → single-flight promise shared by all callers, and
++ *   • across tabs → Web Locks, so tabs refresh one after another.
+  */
+ import createClient, { type Middleware } from "openapi-fetch";
+ import type { paths } from "./schema.js";
+@@ -17,7 +23,9 @@ export function bindSession(session: SessionApi): void {
+   sessionRef = session;
+ }
+ 
+-async function refreshAccessToken(): Promise<string | null> {
++let inflight: Promise<string | null> | null = null;
++
++async function callRefreshEndpoint(): Promise<string | null> {
+   try {
+     const res = await fetch("/api/v1/auth/refresh", { method: "POST" });
+     if (!res.ok) return null;
+@@ -28,34 +36,77 @@ async function refreshAccessToken(): Promise<string | null> {
+   }
+ }
+ 
++function exclusive<T>(fn: () => Promise<T>): Promise<T> {
++  const locks = (globalThis.navigator as Navigator | undefined)?.locks;
++  if (!locks?.request) return fn();
++  return locks.request("waste-auth-refresh", fn) as Promise<T>;
++}
++
++/** Resolves to a fresh access token, or null when the session is gone. */
++export function refreshAccessToken(): Promise<string | null> {
++  inflight ??= exclusive(callRefreshEndpoint).finally(() => {
++    inflight = null;
++  });
++  return inflight;
++}
++
++/** The refresh failed: the session is over — drop it so guards redirect to /login. */
++function expireSession(): void {
++  sessionRef?.setAccessToken(null);
++}
++
++// A Request body can be read once; keep a pristine clone so a retry after
++// refresh also works for POST/PATCH (otherwise: "Body is unusable").
++const retryCopies = new WeakMap<Request, Request>();
++
+ const authMiddleware: Middleware = {
+   onRequest({ request }) {
++    retryCopies.set(request, request.clone());
+     const token = sessionRef?.getAccessToken();
+-    if (token) {
+-      request.headers.set("authorization", `Bearer ${token}`);
+-    }
++    if (token) request.headers.set("authorization", `Bearer ${token}`);
+     return request;
+   },
+-  onResponse({ request, response }) {
+-    // Transparent single retry after refresh on 401 (only for API calls).
+-    if (response.status === 401 && !request.headers.has("x-retried")) {
+-      return (async () => {
+-        const token = await refreshAccessToken();
+-        if (!token) return response;
+-        sessionRef?.setAccessToken(token);
+-        const retry = request.clone();
+-        retry.headers.set("authorization", `Bearer ${token}`);
+-        retry.headers.set("x-retried", "1");
+-        return fetch(retry);
+-      })();
++  async onResponse({ request, response }) {
++    const pristine = retryCopies.get(request);
++    retryCopies.delete(request);
++    if (response.status !== 401 || !pristine) return undefined;
++
++    const token = await refreshAccessToken();
++    if (!token) {
++      expireSession();
++      return response;
+     }
+-    return undefined;
++    sessionRef?.setAccessToken(token);
++    pristine.headers.set("authorization", `Bearer ${token}`);
++    const retried = await fetch(pristine);
++    if (retried.status === 401) expireSession(); // fresh token still refused → revoked/disabled
++    return retried;
+   }
+ };
+ 
+ export const api = createClient<paths>({ baseUrl: "/api/v1" });
+ api.use(authMiddleware);
+ 
++/** fetch() with the same token + refresh-once behaviour, for endpoints outside the typed client. */
++export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
++  const attempt = (token: string | null) => {
++    const headers = new Headers(init.headers);
++    if (token) headers.set("authorization", `Bearer ${token}`);
++    return fetch(path, { ...init, headers });
++  };
++  const res = await attempt(sessionRef?.getAccessToken() ?? null);
++  if (res.status !== 401) return res;
++  const token = await refreshAccessToken();
++  if (!token) {
++    expireSession();
++    return res;
++  }
++  sessionRef?.setAccessToken(token);
++  const retried = await attempt(token);
++  if (retried.status === 401) expireSession();
++  return retried;
++}
++
+ export function apiFetch(): typeof fetch {
+   return globalThis.fetch;
+ }

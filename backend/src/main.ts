@@ -15,6 +15,7 @@ import { SystemRandomSource } from "./shared/random.js";
 import { problemDetails } from "./shared/http/problem-details.js";
 import { createAuthGuards } from "./shared/http/middleware.js";
 import { createTokenService } from "./modules/identity/application/token-service.js";
+import { createSessionValidator } from "./modules/identity/application/session-validator.js";
 import { registerIdentityRoutes } from "./modules/identity/api/routes.js";
 import { registerCatalogRoutes } from "./modules/catalog/api/routes.js";
 import { registerPricingRoutes } from "./modules/pricing/api/routes.js";
@@ -35,12 +36,20 @@ export interface AppContext {
 
 export async function createApp(overrides?: { settings?: Settings }): Promise<AppContext> {
   const settings = overrides?.settings ?? loadSettings();
+  // Trust exactly N proxy hops (proxy-addr semantics: hop 0 is the socket peer).
+  // Trusting "true" would let any client spoof X-Forwarded-For and dodge limits.
+  const hops = settings.trustProxyHops;
+  const trustProxy = hops > 0 ? (_addr: string, hop: number) => hop < hops : false;
   const app = Fastify({
     logger: {
       level: settings.logLevel,
       redact: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"],
       timestamp: () => `,"time":"${new Date().toISOString()}"`
     },
+    // Behind a reverse proxy (Render) req.ip would otherwise be the PROXY's
+    // address: every user would share one rate-limit bucket and every audit
+    // row would record the same IP.
+    trustProxy: trustProxy,
     requestIdHeader: "x-request-id",
     requestIdLogLabel: "request_id",
     bodyLimit: 1_048_576
@@ -62,7 +71,7 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
   });
   await app.register(fastifyRateLimit, {
     global: true,
-    max: 300,
+    max: 600, // per real client IP; sensitive routes set stricter limits
     timeWindow: "1 minute",
     errorResponseBuilder: () => ({
       type: "https://waste-platform/errors/rate_limited",
@@ -100,6 +109,14 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
     }
   });
 
+  // ── Never let a browser/proxy cache authenticated API data ────────────
+  app.addHook("onSend", async (req, reply) => {
+    if (req.url.startsWith("/api/")) {
+      void reply.header("cache-control", "no-store");
+      void reply.header("pragma", "no-cache");
+    }
+  });
+
   // ── Error handling (RFC 7807, Arabic messages) ───────────────────────
   app.setErrorHandler((err, req, reply) => problemDetails(req, reply, err));
 
@@ -117,7 +134,7 @@ export async function createApp(overrides?: { settings?: Settings }): Promise<Ap
     issuer: "waste-platform",
     audience: "waste-web"
   });
-  const guards = createAuthGuards(tokens);
+  const guards = createAuthGuards(tokens, createSessionValidator(db));
   const identityDeps = { db, settings, clock, random, tokens };
 
   // ── API v1 ───────────────────────────────────────────────────────────

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests",
     "arch": "depcruise src --config .dependency-cruiser.cjs",
-    "test": "vitest run --exclude 'tests/integration/**' --exclude 'tests/e2e/**'",
+    "test": "vitest run --exclude 'tests/integration/**' --exclude 'tests/e2e/**' --exclude 'tests/security/**'",
     "test:unit": "vitest run tests/unit",
     "test:property": "vitest run tests/property",
     "test:integration": "vitest run tests/integration",

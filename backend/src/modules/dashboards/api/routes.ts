@@ -20,28 +20,28 @@ export function registerDashboardRoutes(
   db: Db,
   guards: AuthGuards
 ): void {
-  app.get("/citizen/dashboard", { preHandler: guards.requireRole("citizen") }, async (req) =>
+  app.get("/citizen/dashboard", { onRequest: guards.requireRole("citizen") }, async (req) =>
     citizenDashboard(db, req.authUser!.id)
   );
 
-  app.get("/collector/dashboard", { preHandler: guards.requireRole("collector") }, async (req) =>
+  app.get("/collector/dashboard", { onRequest: guards.requireRole("collector") }, async (req) =>
     collectorDashboard(db, req.authUser!.id)
   );
 
-  app.get("/authority/dashboard", { preHandler: guards.requireRole("authority") }, async (req) => {
+  app.get("/authority/dashboard", { onRequest: guards.requireRole("authority") }, async (req) => {
     const serviceAreaId = await getServiceAreaForUser(db, req.authUser!.id);
     return authorityDashboard(db, serviceAreaId);
   });
 
-  app.get("/sorter/dashboard", { preHandler: guards.requireRole("sorter") }, async () =>
+  app.get("/sorter/dashboard", { onRequest: guards.requireRole("sorter") }, async () =>
     sorterDashboard(db)
   );
 
-  app.get("/finance/dashboard", { preHandler: guards.requireRole("finance") }, async () =>
+  app.get("/finance/dashboard", { onRequest: guards.requireRole("finance") }, async () =>
     financeDashboardData(db)
   );
 
-  app.get("/manager/dashboard", { preHandler: guards.requireRole("manager") }, async () =>
+  app.get("/manager/dashboard", { onRequest: guards.requireRole("manager") }, async () =>
     managerDashboard(db)
   );
 }

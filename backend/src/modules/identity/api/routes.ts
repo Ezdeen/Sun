@@ -22,7 +22,13 @@ import {
   deleteAccountByManager
 } from "../application/manage-accounts.js";
 import { listUsers, updateUserStatus } from "../infrastructure/users-repo.js";
-import { listAuthEvents, recordAuthEvent } from "../infrastructure/sessions-repo.js";
+import {
+  findActiveRefreshToken,
+  listAuthEvents,
+  recordAuthEvent,
+  revokeAllUserRefreshTokens
+} from "../infrastructure/sessions-repo.js";
+import { sha256Hex } from "../domain/identity-hash.js";
 import { REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH, type IdentityDeps } from "../application/deps.js";
 import type { AuthGuards } from "../../../shared/http/middleware.js";
 import { parsePageParams } from "../../../shared/http/pagination.js";
@@ -112,12 +118,16 @@ export function registerIdentityRoutes(
 ): void {
   const cookieOpts = {
     httpOnly: true,
-    sameSite: "lax" as const,
+    sameSite: "strict" as const,
     secure: deps.settings.env === "production",
     path: REFRESH_COOKIE_PATH
   };
 
-  app.post("/auth/login", { schema: { body: LoginBody } }, async (req, reply) => {
+  const strict = (max = deps.settings.authRateLimitMax) => ({
+    rateLimit: { max, timeWindow: "1 minute" }
+  });
+
+  app.post("/auth/login", { config: strict(), schema: { body: LoginBody } }, async (req, reply) => {
     const body = req.body as LoginBodyT;
     const result = await login(deps, {
       identifier: body.identifier,
@@ -132,7 +142,8 @@ export function registerIdentityRoutes(
     return { accessToken: result.accessToken, user: result.user };
   });
 
-  app.post("/auth/refresh", async (req, reply) => {
+  // Boot + several tabs call this; generous but still bounded.
+  app.post("/auth/refresh", { config: strict(deps.settings.authRateLimitMax * 6) }, async (req, reply) => {
     const raw = req.cookies[REFRESH_COOKIE_NAME];
     if (!raw) throw new DomainError("unauthorized", "refresh cookie missing", 401);
     const result = await refresh(deps, {
@@ -147,31 +158,33 @@ export function registerIdentityRoutes(
     return { accessToken: result.accessToken };
   });
 
-  app.post("/auth/logout", { preHandler: guards.requireAuth }, async (req, reply) => {
+  // Logout must work with the refresh cookie ALONE: by the time a user clicks
+  // it the 15-min access token has often expired, and a logout that 401s
+  // would leave the refresh token alive server-side.
+  app.post("/auth/logout", async (req, reply) => {
     const raw = req.cookies[REFRESH_COOKIE_NAME] ?? null;
-    await logout(deps, {
-      refreshToken: raw,
-      userId: req.authUser!.id,
-      ip: req.ip
-    });
+    if (raw) {
+      const row = await findActiveRefreshToken(deps.db, sha256Hex(raw));
+      if (row) await logout(deps, { refreshToken: raw, userId: row.userId, ip: req.ip });
+    }
     void reply.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
     return { ok: true };
   });
 
-  app.post("/auth/logout-all", { preHandler: guards.requireAuth }, async (req, reply) => {
+  app.post("/auth/logout-all", { onRequest: guards.requireAuth }, async (req, reply) => {
     const revoked = await logoutAll(deps, { userId: req.authUser!.id, ip: req.ip });
     void reply.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
     return { ok: true, revokedSessions: revoked };
   });
 
-  app.get("/auth/me", { preHandler: guards.requireAuth }, async (req) => {
+  app.get("/auth/me", { onRequest: guards.requireAuth }, async (req) => {
     const u = req.authUser!;
-    return { id: u.id, role: u.role, permissions: [...u.permissions] };
+    return { id: u.id, role: u.role, displayName: u.displayName, permissions: [...u.permissions] };
   });
 
   app.post(
     "/auth/change-password",
-    { preHandler: guards.requireAuth, schema: { body: ChangePasswordBody } },
+    { onRequest: guards.requireAuth, config: strict(), schema: { body: ChangePasswordBody } },
     async (req, reply) => {
       const body = req.body as Static<typeof ChangePasswordBody>;
       await changePassword(deps, {
@@ -186,7 +199,7 @@ export function registerIdentityRoutes(
 
   app.post(
     "/auth/invitations/accept",
-    { schema: { body: AcceptInvitationBody } },
+    { config: strict(), schema: { body: AcceptInvitationBody } },
     async (req) => {
       const body = req.body as Static<typeof AcceptInvitationBody>;
       const result = await acceptInvitationAndCreateUser(deps, {
@@ -199,7 +212,7 @@ export function registerIdentityRoutes(
     }
   );
 
-  app.post("/citizens/register", { schema: { body: RegisterCitizenBody } }, async (req) => {
+  app.post("/citizens/register", { config: strict(), schema: { body: RegisterCitizenBody } }, async (req) => {
     const body = req.body as Static<typeof RegisterCitizenBody>;
     const result = await registerCitizen(deps, {
       displayName: body.displayName,
@@ -216,7 +229,7 @@ export function registerIdentityRoutes(
   // ── Manager-only surface ───────────────────────────────────────────
   app.post(
     "/admin/invitations",
-    { preHandler: guards.requirePermission("account:manage"), schema: { body: InvitationBody } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { body: InvitationBody } },
     async (req) => {
       const body = req.body as Static<typeof InvitationBody>;
       return createInvitation(deps, {
@@ -230,7 +243,7 @@ export function registerIdentityRoutes(
 
   app.get(
     "/admin/invitations",
-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
     async (req) => {
       const p = parsePageParams(req.query as Record<string, unknown>);
       const result = await listPendingInvitations(deps, p.page, p.pageSize);
@@ -252,7 +265,7 @@ export function registerIdentityRoutes(
 
   app.delete(
     "/admin/invitations/:id",
-    { preHandler: guards.requirePermission("account:manage") },
+    { onRequest: guards.requirePermission("account:manage") },
     async (req) => {
       const { id } = req.params as { id: string };
       await revokeInvitationById(deps, id);
@@ -262,7 +275,7 @@ export function registerIdentityRoutes(
 
   app.get(
     "/admin/accounts",
-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
     async (req) => {
       const q = req.query as Record<string, unknown>;
       const p = parsePageParams(q);
@@ -288,7 +301,7 @@ export function registerIdentityRoutes(
   /** Manager: create an account directly (any role), no invitation needed. */
   app.post(
     "/admin/accounts",
-    { preHandler: guards.requirePermission("account:manage"), schema: { body: CreateAccountBody } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { body: CreateAccountBody } },
     async (req, reply) => {
       const b = req.body as Static<typeof CreateAccountBody>;
       const result = await createAccountByManager(deps, {
@@ -308,7 +321,7 @@ export function registerIdentityRoutes(
   /** Manager: edit an existing account's display name / email / phone / password. */
   app.patch(
     "/admin/accounts/:id",
-    { preHandler: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { body: UpdateAccountBody } },
     async (req) => {
       const { id } = req.params as { id: string };
       const b = req.body as Static<typeof UpdateAccountBody>;
@@ -332,7 +345,7 @@ export function registerIdentityRoutes(
   /** Manager: permanently delete an account (blocked if it has business history). */
   app.delete(
     "/admin/accounts/:id",
-    { preHandler: guards.requirePermission("account:manage") },
+    { onRequest: guards.requirePermission("account:manage") },
     async (req) => {
       const { id } = req.params as { id: string };
       await deleteAccountByManager(deps, id, req.authUser!.id);
@@ -343,7 +356,7 @@ export function registerIdentityRoutes(
   app.patch(
     "/admin/accounts/:id/status",
     {
-      preHandler: guards.requirePermission("account:manage"),
+      onRequest: guards.requirePermission("account:manage"),
       schema: {
         body: Type.Object({
           status: Type.Union([Type.Literal("active"), Type.Literal("disabled")])
@@ -358,6 +371,9 @@ export function registerIdentityRoutes(
       }
       const updated = await updateUserStatus(deps.db, id, body.status);
       if (!updated) throw new DomainError("not_found", "user not found", 404);
+      if (body.status === "disabled") {
+        await revokeAllUserRefreshTokens(deps.db, id, "account_disabled");
+      }
       await recordAuthEvent(deps.db, {
         id: randomUUID(),
         userId: id,
@@ -370,7 +386,7 @@ export function registerIdentityRoutes(
 
   app.get(
     "/admin/audit",
-    { preHandler: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
+    { onRequest: guards.requirePermission("account:manage"), schema: { querystring: PageQuery } },
     async (req) => {
       const p = parsePageParams(req.query as Record<string, unknown>);
       const result = await listAuthEvents(deps.db, {

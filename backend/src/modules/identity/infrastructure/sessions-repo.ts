@@ -4,6 +4,7 @@
  * rotation and reuse detection.
  */
 import { and, eq, isNull, sql, gt } from "drizzle-orm";
+import type { Db } from "../../../shared/db/client.js";
 import type { DbOrTx } from "../../../shared/db/unit-of-work.js";
 import { refreshTokens, authEvents } from "../../../shared/db/schema.js";
 
@@ -39,8 +40,14 @@ export async function findActiveRefreshToken(db: DbOrTx, tokenHash: string) {
   return rows[0];
 }
 
+/**
+ * Atomic single-use rotation. The UPDATE only matches a token that is still
+ * un-revoked, so of two concurrent refreshes exactly ONE can win; the loser
+ * gets `false` and must be treated as token reuse (never as a second valid
+ * descendant — that would fork the chain and defeat reuse detection).
+ */
 export async function rotateRefreshToken(
-  db: DbOrTx,
+  db: Db,
   input: {
     oldId: string;
     userId: string;
@@ -50,19 +57,24 @@ export async function rotateRefreshToken(
     ip?: string | null;
     userAgent?: string | null;
   }
-): Promise<void> {
-  await db
-    .update(refreshTokens)
-    .set({ revokedAt: new Date(), revokedReason: "rotated", replacedBy: input.newId })
-    .where(and(eq(refreshTokens.id, input.oldId), isNull(refreshTokens.revokedAt)));
-  await db.insert(refreshTokens).values({
-    id: input.newId,
-    userId: input.userId,
-    tokenHash: input.newTokenHash,
-    expiresAt: input.expiresAt,
-    rotatedFrom: input.oldId,
-    ip: input.ip ?? null,
-    userAgent: input.userAgent ?? null
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const won = await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date(), revokedReason: "rotated", replacedBy: input.newId })
+      .where(and(eq(refreshTokens.id, input.oldId), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
+    if (won.length === 0) return false;
+    await tx.insert(refreshTokens).values({
+      id: input.newId,
+      userId: input.userId,
+      tokenHash: input.newTokenHash,
+      expiresAt: input.expiresAt,
+      rotatedFrom: input.oldId,
+      ip: input.ip ?? null,
+      userAgent: input.userAgent ?? null
+    });
+    return true;
   });
 }
 
@@ -96,6 +108,59 @@ export async function countActiveSessions(db: DbOrTx, userId: string): Promise<n
       )
     );
   return countRow?.count ?? 0;
+}
+
+/**
+ * Live state of the session an access token belongs to. `sid` is the id of
+ * the refresh-token row current when the token was issued; rotation may have
+ * moved the chain on since, so we walk `replaced_by` to the chain HEAD and
+ * judge revocation there (logout / logout-all / password change / reuse
+ * revoke the head). The user's status and role are read from the DB so a
+ * disabled account or changed role takes effect immediately.
+ */
+export interface SessionState {
+  userStatus: string;
+  userRole: string;
+  displayName: string;
+  headRevoked: boolean;
+}
+
+export async function findSessionState(
+  db: DbOrTx,
+  userId: string,
+  sessionId: string
+): Promise<SessionState | null> {
+  const res = await db.execute(sql`
+    WITH RECURSIVE chain AS (
+      SELECT id, replaced_by, revoked_at, 0 AS depth
+        FROM app.refresh_tokens
+       WHERE id = ${sessionId} AND user_id = ${userId}
+      UNION ALL
+      SELECT r.id, r.replaced_by, r.revoked_at, c.depth + 1
+        FROM app.refresh_tokens r
+        JOIN chain c ON r.id = c.replaced_by
+       WHERE c.depth < 100
+    )
+    SELECT u.status AS user_status, u.role AS user_role, u.display_name,
+           (SELECT (revoked_at IS NOT NULL) FROM chain ORDER BY depth DESC LIMIT 1) AS head_revoked,
+           EXISTS (SELECT 1 FROM chain) AS has_session
+      FROM app.users u
+     WHERE u.id = ${userId}
+  `);
+  const row = (res.rows as {
+    user_status: string;
+    user_role: string;
+    display_name: string;
+    head_revoked: boolean | null;
+    has_session: boolean;
+  }[])[0];
+  if (!row || !row.has_session) return null;
+  return {
+    userStatus: row.user_status,
+    userRole: row.user_role,
+    displayName: row.display_name,
+    headRevoked: row.head_revoked === true
+  };
 }
 
 // ── Auth events (audit) ──────────────────────────────────────────────────

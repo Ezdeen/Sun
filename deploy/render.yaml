@@ -37,6 +37,10 @@ services:
         value: "14"
       - key: CORS_ORIGINS
         value: "" # same-origin SPA — no CORS needed
+      - key: TRUST_PROXY_HOPS
+        value: "1" # Render terminates TLS in front of the service — verify auth_events.ip after deploy
+      - key: AUTH_RATE_LIMIT_PER_MINUTE
+        value: "10"
       - key: ALLOW_CITIZEN_SELF_REGISTRATION
         value: "true"
       - key: DEMO_MODE

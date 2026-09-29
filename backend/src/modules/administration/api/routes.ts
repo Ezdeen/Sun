@@ -40,13 +40,13 @@ export function registerAdministrationRoutes(
 ): void {
   app.get(
     "/admin/settings",
-    { preHandler: guards.requirePermission("settings:update") },
+    { onRequest: guards.requirePermission("settings:update") },
     async () => readSettingsForDisplay(db)
   );
 
   app.patch(
     "/admin/settings",
-    { preHandler: guards.requirePermission("settings:update"), schema: { body: UpdateSettingsBody } },
+    { onRequest: guards.requirePermission("settings:update"), schema: { body: UpdateSettingsBody } },
     async (req) => {
       const b = req.body as Static<typeof UpdateSettingsBody>;
       await updateSettings(db, b, req.authUser!.id);

@@ -30,7 +30,7 @@ export function CitizenDashboard(): React.ReactNode {
   });
 
   if (dash.isLoading) return <Loading />;
-  if (dash.isError || !dash.data) return <ErrorState />;
+  if (!dash.data) return <ErrorState />;
   const d = dash.data;
 
   return (
@@ -104,7 +104,7 @@ export function CitizenRequests(): React.ReactNode {
     queryFn: async () => (await api.GET("/requests", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as RequestsListData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) {
     return (
       <div className="eco-citizen">
@@ -222,7 +222,7 @@ export function NewCitizenRequest(): React.ReactNode {
   });
 
   if (catalog.isLoading) return <Loading />;
-  if (catalog.isError || !catalog.data) return <ErrorState />;
+  if (!catalog.data) return <ErrorState />;
 
   if (created) {
     return (
@@ -401,7 +401,7 @@ export function CitizenRequestDetail(): React.ReactNode {
     queryFn: async () => (await api.GET("/requests/{id}", { params: { path: { id: id! } } })).data as unknown as RequestDetailData | undefined
   });
   if (detail.isLoading) return <Loading />;
-  if (detail.isError || !detail.data) return <ErrorState />;
+  if (!detail.data) return <ErrorState />;
   const d = detail.data;
 
   return (
@@ -478,7 +478,7 @@ export function CitizenPayouts(): React.ReactNode {
     queryFn: async () => (await api.GET("/me/payouts", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as PayoutsData | undefined
   });
   if (payouts.isLoading) return <Loading />;
-  if (payouts.isError || !payouts.data) return <ErrorState />;
+  if (!payouts.data) return <ErrorState />;
   if (payouts.data.items.length === 0) {
     return (
       <div className="eco-citizen">

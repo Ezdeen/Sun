@@ -74,13 +74,13 @@ export function registerCatalogRoutes(
 
   app.get(
     "/admin/waste-types",
-    { preHandler: guards.requirePermission("catalog:manage") },
+    { onRequest: guards.requirePermission("catalog:manage") },
     async () => readManagedWasteTypes(db)
   );
 
   app.post(
     "/admin/waste-types",
-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: WasteTypeBody } },
+    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: WasteTypeBody } },
     async (req) => {
       const b = req.body as Static<typeof WasteTypeBody>;
       return createWasteType(db, b);
@@ -90,7 +90,7 @@ export function registerCatalogRoutes(
   app.patch(
     "/admin/waste-types/:code",
     {
-      preHandler: guards.requirePermission("catalog:manage"),
+      onRequest: guards.requirePermission("catalog:manage"),
       schema: {
         body: Type.Partial(WasteTypeBody, { additionalProperties: false })
       }
@@ -104,13 +104,13 @@ export function registerCatalogRoutes(
 
   app.delete(
     "/admin/waste-types/:code",
-    { preHandler: guards.requirePermission("catalog:manage") },
+    { onRequest: guards.requirePermission("catalog:manage") },
     async (req) => deleteWasteType(db, (req.params as { code: string }).code)
   );
 
   app.post(
     "/admin/addons",
-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
+    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: AddonBody } },
     async (req) => {
       const b = req.body as Static<typeof AddonBody>;
       return createAddon(db, b);
@@ -120,7 +120,7 @@ export function registerCatalogRoutes(
   app.patch(
     "/admin/addons/:code",
     {
-      preHandler: guards.requirePermission("catalog:manage"),
+      onRequest: guards.requirePermission("catalog:manage"),
       schema: {
         body: AddonPatchBody
       }
@@ -133,20 +133,20 @@ export function registerCatalogRoutes(
 
   app.delete(
     "/admin/addons/:code",
-    { preHandler: guards.requirePermission("catalog:manage") },
+    { onRequest: guards.requirePermission("catalog:manage") },
     async (req) => deleteAddon(db, (req.params as { code: string }).code)
   );
 
   // ── Service areas (manager) ──────────────────────────────────────────
   app.get(
     "/admin/service-areas",
-    { preHandler: guards.requirePermission("catalog:manage") },
+    { onRequest: guards.requirePermission("catalog:manage") },
     async () => ({ items: await listServiceAreasForManager(db) })
   );
 
   app.post(
     "/admin/service-areas",
-    { preHandler: guards.requirePermission("catalog:manage"), schema: { body: ServiceAreaBody } },
+    { onRequest: guards.requirePermission("catalog:manage"), schema: { body: ServiceAreaBody } },
     async (req, reply) => {
       const b = req.body as Static<typeof ServiceAreaBody>;
       const row = await createServiceArea(db, b);
@@ -158,7 +158,7 @@ export function registerCatalogRoutes(
   app.patch(
     "/admin/service-areas/:id",
     {
-      preHandler: guards.requirePermission("catalog:manage"),
+      onRequest: guards.requirePermission("catalog:manage"),
       schema: { body: Type.Partial(ServiceAreaBody, { additionalProperties: false }) }
     },
     async (req) => {
@@ -170,7 +170,7 @@ export function registerCatalogRoutes(
 
   app.delete(
     "/admin/service-areas/:id",
-    { preHandler: guards.requirePermission("catalog:manage") },
+    { onRequest: guards.requirePermission("catalog:manage") },
     async (req) => {
       const { id } = req.params as { id: string };
       await deleteServiceArea(db, id);
@@ -182,7 +182,7 @@ export function registerCatalogRoutes(
   app.patch(
     "/admin/service-areas/:id/authority",
     {
-      preHandler: guards.requirePermission("catalog:manage"),
+      onRequest: guards.requirePermission("catalog:manage"),
       schema: { body: ServiceAreaAuthorityBody }
     },
     async (req) => {

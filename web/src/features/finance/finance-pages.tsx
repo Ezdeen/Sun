@@ -26,7 +26,7 @@ export function FinanceDashboard(): React.ReactNode {
     queryFn: async () => (await api.GET("/finance/dashboard")).data as unknown as FinanceDashboardData | undefined
   });
   if (dash.isLoading) return <Loading />;
-  if (dash.isError || !dash.data) return <ErrorState />;
+  if (!dash.data) return <ErrorState />;
   const d = dash.data;
   return (
     <>
@@ -72,7 +72,7 @@ export function FinanceInvoices(): React.ReactNode {
     queryFn: async () => (await api.GET("/invoices", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as InvoicesListData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.invoices} /><EmptyState label="لا فواتير بعد" /></>;
   return (
     <>
@@ -194,7 +194,7 @@ export function InvoiceDetail(): React.ReactNode {
 
   if (!id) return <ErrorState />;
   if (detail.isLoading) return <Loading />;
-  if (detail.isError || !detail.data) return <ErrorState />;
+  if (!detail.data) return <ErrorState />;
   const d = detail.data;
 
   const totals = d.payouts.reduce<Record<string, number>>((acc, p) => {
@@ -253,7 +253,7 @@ export function FinancePayouts(): React.ReactNode {
     queryFn: async () => (await api.GET("/payouts", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as PayoutsListData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.payouts} /><EmptyState /></>;
   return (
     <>
@@ -298,7 +298,7 @@ export function FinanceLedger(): React.ReactNode {
     queryFn: async () => (await api.GET("/finance/ledger", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as LedgerData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.ledger} /><EmptyState /></>;
   return (
     <>

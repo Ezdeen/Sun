@@ -26,7 +26,7 @@ export function CollectorDashboard(): React.ReactNode {
     queryFn: async () => (await api.GET("/collector/dashboard")).data as unknown as CollectorDashboardData | undefined
   });
   if (dash.isLoading) return <Loading />;
-  if (dash.isError || !dash.data) return <ErrorState />;
+  if (!dash.data) return <ErrorState />;
   const d = dash.data;
   return (
     <>
@@ -76,7 +76,7 @@ export function CollectorSchedule(): React.ReactNode {
     queryFn: async () => (await api.GET("/collector/schedule")).data as unknown as ScheduleData | undefined
   });
   if (schedule.isLoading) return <Loading />;
-  if (schedule.isError || !schedule.data) return <ErrorState />;
+  if (!schedule.data) return <ErrorState />;
   const s = schedule.data;
   return (
     <>
@@ -139,7 +139,7 @@ export function CollectorRequests(): React.ReactNode {
     queryFn: async () => (await api.GET("/requests", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as RequestsListData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.requests} /><EmptyState /></>;
   return (
     <>
@@ -175,7 +175,7 @@ export function CollectorRequestDetail(): React.ReactNode {
   });
   if (!id) return <ErrorState />;
   if (detail.isLoading) return <Loading />;
-  if (detail.isError || !detail.data) return <ErrorState />;
+  if (!detail.data) return <ErrorState />;
   const d = detail.data;
   const next = nextStepFor(d.request.status);
   return (
@@ -234,7 +234,7 @@ export function CollectorPayouts(): React.ReactNode {
     queryFn: async () => (await api.GET("/me/payouts", { params: { query: { page: 1, pageSize: 50 } } })).data as unknown as PayoutsData | undefined
   });
   if (payouts.isLoading) return <Loading />;
-  if (payouts.isError || !payouts.data) return <ErrorState />;
+  if (!payouts.data) return <ErrorState />;
   if (payouts.data.items.length === 0) return <><PageHeader title={ar.myPayouts} /><EmptyState label="لا مستحقات بعد" /></>;
   const total = payouts.data.items.filter((p) => p.status !== "void").reduce((acc, p) => acc + Number.parseFloat(p.amount), 0);
   return (
@@ -316,7 +316,7 @@ export function CollectorScan(): React.ReactNode {
         </Card>
       ) : schedule.isLoading ? (
         <Loading />
-      ) : schedule.isError || !schedule.data ? (
+      ) : !schedule.data ? (
         <ErrorState />
       ) : !match ? (
         <div className="space-y-3">

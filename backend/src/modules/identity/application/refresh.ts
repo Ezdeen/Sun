@@ -5,7 +5,6 @@
 import { DomainError } from "../../../shared/errors.js";
 import { sha256Hex } from "../domain/identity-hash.js";
 import { uuidv7 } from "../../../shared/ids.js";
-import { permissionsForRole } from "../domain/permissions.js";
 import {
   findActiveRefreshToken,
   rotateRefreshToken,
@@ -18,6 +17,22 @@ import type { IdentityDeps } from "./deps.js";
 export interface RefreshOutput {
   accessToken: string;
   refreshToken: string;
+}
+
+async function handleReuse(
+  deps: IdentityDeps,
+  row: { id: string; userId: string },
+  input: { ip?: string | null; userAgent?: string | null }
+): Promise<void> {
+  await revokeAllUserRefreshTokens(deps.db, row.userId, "reuse_detected");
+  await recordAuthEvent(deps.db, {
+    id: uuidv7(),
+    userId: row.userId,
+    eventType: "refresh_reuse_detected",
+    ip: input.ip,
+    userAgent: input.userAgent,
+    details: { reusedTokenId: row.id }
+  });
 }
 
 export async function refresh(
@@ -33,17 +48,15 @@ export async function refresh(
   }
 
   if (row.revokedAt !== null) {
-    // REUSE DETECTED — revoke every session of this user.
-    await revokeAllUserRefreshTokens(db, row.userId, "reuse_detected");
-    await recordAuthEvent(db, {
-      id: uuidv7(),
-      userId: row.userId,
-      eventType: "refresh_reuse_detected",
-      ip: input.ip,
-      userAgent: input.userAgent,
-      details: { reusedTokenId: row.id }
-    });
-    throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
+    // Only a token that was already ROTATED is evidence of theft (someone is
+    // replaying a superseded token). A token revoked by logout / password
+    // change / disable is simply dead: reject it, but do not let a stale
+    // cookie kick the legitimate user out of every device.
+    if (row.revokedReason === "rotated") {
+      await handleReuse(deps, row, input);
+      throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
+    }
+    throw new DomainError("unauthorized", "refresh token revoked", 401);
   }
 
   if (row.expiresAt.getTime() <= clock.now().getTime()) {
@@ -61,7 +74,7 @@ export async function refresh(
   const expiresAt = new Date(
     clock.now().getTime() + deps.settings.refreshTokenTtlDays * 86_400_000
   );
-  await rotateRefreshToken(db, {
+  const rotated = await rotateRefreshToken(db, {
     oldId: row.id,
     userId: row.userId,
     newId,
@@ -70,6 +83,12 @@ export async function refresh(
     ip: input.ip,
     userAgent: input.userAgent
   });
+  if (!rotated) {
+    // Lost a concurrent-rotation race: a second holder of the same token
+    // exists. We cannot tell a racing tab from an attacker, so fail safe.
+    await handleReuse(deps, row, input);
+    throw new DomainError("refresh_reuse_detected", "refresh token reuse detected", 401);
+  }
   await recordAuthEvent(db, {
     id: uuidv7(),
     userId: row.userId,
@@ -84,6 +103,5 @@ export async function refresh(
     sessionId: newId
   });
 
-  void permissionsForRole; // permissions travel inside the access token role
   return { accessToken, refreshToken: newRefreshToken };
 }

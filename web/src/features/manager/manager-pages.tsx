@@ -28,7 +28,7 @@ export function ManagerDashboard(): React.ReactNode {
     queryFn: async () => (await api.GET("/manager/dashboard")).data as unknown as ManagerDashboardData | undefined
   });
   if (dash.isLoading) return <Loading />;
-  if (dash.isError || !dash.data) return <ErrorState />;
+  if (!dash.data) return <ErrorState />;
   const d = dash.data;
   return (
     <>
@@ -298,7 +298,7 @@ export function ManagerAccounts(): React.ReactNode {
   const refresh = () => void qc.invalidateQueries({ queryKey: ["accounts"] });
 
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
 
   return (
     <>
@@ -471,7 +471,7 @@ export function ManagerCatalog(): React.ReactNode {
     if (!result.response.ok) throw new Error((result.data as { detail?: string } | undefined)?.detail ?? "تعذّر حذف الإضافة");
   }, onSuccess: refresh, onError: (err) => setError(err.message) });
   if (catalog.isLoading) return <Loading />;
-  if (catalog.isError || !catalog.data) return <ErrorState />;
+  if (!catalog.data) return <ErrorState />;
   return (
     <>
       <PageHeader title={ar.catalog} subtitle={`${catalog.data.wasteTypes.length} نوع`} />
@@ -772,7 +772,7 @@ export function ManagerServiceAreas(): React.ReactNode {
   });
 
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
 
   return (
     <>
@@ -856,7 +856,7 @@ export function ManagerSettings(): React.ReactNode {
   });
 
   if (settings.isLoading) return <Loading />;
-  if (settings.isError || !settings.data) return <ErrorState />;
+  if (!settings.data) return <ErrorState />;
   const s = settings.data;
 
   return (
@@ -996,7 +996,7 @@ export function ManagerAudit(): React.ReactNode {
     queryFn: async () => (await api.GET("/admin/audit", { params: { query: { page: 1, pageSize: 100 } } })).data as unknown as AuditData | undefined
   });
   if (list.isLoading) return <Loading />;
-  if (list.isError || !list.data) return <ErrorState />;
+  if (!list.data) return <ErrorState />;
   if (list.data.items.length === 0) return <><PageHeader title={ar.auditLog} /><EmptyState /></>;
   return (
     <>

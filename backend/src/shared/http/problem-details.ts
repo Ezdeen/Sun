@@ -93,6 +93,30 @@ export function problemDetails(
     return reply.status(400).send(problem);
   }
 
+  // Framework / plugin client errors (rate-limit 429, malformed JSON 400,
+  // oversized body 413, wrong content-type 415…). They carry their own 4xx
+  // status; answering 500 would hide the real cause from clients and page
+  // whoever watches error logs for what is just a throttled request.
+  const raw = err as { statusCode?: unknown; status?: unknown } | null;
+  const clientStatus = [raw?.statusCode, raw?.status].find(
+    (v): v is number => typeof v === "number" && v >= 400 && v < 500
+  );
+  if (clientStatus !== undefined) {
+    const code = (
+      clientStatus === 429 ? "rate_limited" : clientStatus === 404 ? "not_found" : "validation_error"
+    ) as ProblemDetails["code"];
+    const problem: ProblemDetails = {
+      type: `https://waste-platform/errors/${code}`,
+      title: "خطأ في الطلب",
+      status: clientStatus,
+      code,
+      detail: ERROR_MESSAGES_AR[code] ?? "طلب غير صالح",
+      instance: req.url.split("?")[0],
+      requestId
+    };
+    return reply.status(clientStatus).send(problem);
+  }
+
   // Unknown error — log server-side only, generic message to client.
   req.log.error({ err, requestId }, "unhandled error");
   const problem: ProblemDetails = {

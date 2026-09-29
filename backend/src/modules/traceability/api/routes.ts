@@ -25,7 +25,7 @@ export function registerTraceabilityRoutes(
 
   app.get(
     "/admin/traceability/verify/:aggregateType/:aggregateId",
-    { preHandler: guards.requirePermission("traceability:verify") },
+    { onRequest: guards.requirePermission("traceability:verify") },
     async (req) => {
       const { aggregateType, aggregateId } = req.params as {
         aggregateType: string;

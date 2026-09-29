@@ -58,7 +58,7 @@ export function registerCollectionRoutes(
 ): void {
   app.post(
     "/requests",
-    { preHandler: guards.requirePermission("request:create"), schema: { body: CreateRequestBody } },
+    { onRequest: guards.requirePermission("request:create"), schema: { body: CreateRequestBody } },
     async (req) => {
       const body = req.body as Static<typeof CreateRequestBody>;
       if (req.authUser!.role !== "citizen" && req.authUser!.role !== "manager") {
@@ -72,7 +72,7 @@ export function registerCollectionRoutes(
     }
   );
 
-  app.get("/requests", { preHandler: guards.requirePermission("request:read"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/requests", { onRequest: guards.requirePermission("request:read"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const q = req.query as Record<string, unknown>;
     const status = typeof q["status"] === "string" && (REQUEST_STATUSES as readonly string[]).includes(q["status"])
@@ -104,7 +104,7 @@ export function registerCollectionRoutes(
     };
   });
 
-  app.get("/requests/:id", { preHandler: guards.requirePermission("request:read") }, async (req) => {
+  app.get("/requests/:id", { onRequest: guards.requirePermission("request:read") }, async (req) => {
     const { id } = req.params as { id: string };
     const actor = await actorContext(deps.db, req.authUser!);
     const request = await getRequest(deps.db, id);
@@ -141,7 +141,7 @@ export function registerCollectionRoutes(
 
   app.post(
     "/requests/:id/transitions",
-    { preHandler: guards.requirePermission("request:transition"), schema: { body: TransitionBody } },
+    { onRequest: guards.requirePermission("request:transition"), schema: { body: TransitionBody } },
     async (req) => {
       const { id } = req.params as { id: string };
       const body = req.body as Static<typeof TransitionBody>;
@@ -164,7 +164,7 @@ export function registerCollectionRoutes(
     }
   );
 
-  app.get("/collector/schedule", { preHandler: guards.requirePermission("schedule:read") }, async (req) => {
+  app.get("/collector/schedule", { onRequest: guards.requirePermission("schedule:read") }, async (req) => {
     return collectorSchedule(deps.db, req.authUser!.id);
   });
 }

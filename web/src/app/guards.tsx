@@ -16,8 +16,9 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
 export function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
   const { user, ready } = useSession();
+  const location = useLocation();
   if (!ready) return <Loading />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (user.role !== role) return <Navigate to="/forbidden" replace />;
   return <>{children}</>;
 }

@@ -43,7 +43,7 @@ export function registerFinanceRoutes(
   app.post(
     "/invoices",
     {
-      preHandler: guards.requirePermission("invoice:create"),
+      onRequest: guards.requirePermission("invoice:create"),
       schema: {
         body: CreateInvoiceBody,
         headers: Type.Object({
@@ -66,7 +66,7 @@ export function registerFinanceRoutes(
     }
   );
 
-  app.get("/invoices", { preHandler: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/invoices", { onRequest: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const q = req.query as Record<string, unknown>;
     const status = q["status"] === "active" || q["status"] === "void" ? (q["status"] as "active" | "void") : undefined;
@@ -88,7 +88,7 @@ export function registerFinanceRoutes(
     };
   });
 
-  app.get("/invoices/:id", { preHandler: guards.requirePermission("ledger:read") }, async (req) => {
+  app.get("/invoices/:id", { onRequest: guards.requirePermission("ledger:read") }, async (req) => {
     const { id } = req.params as { id: string };
     const invoice = await getInvoice(deps.db, id);
     if (!invoice) throw new DomainError("not_found", "invoice not found", 404);
@@ -107,7 +107,7 @@ export function registerFinanceRoutes(
     };
   });
 
-  app.get("/finance/ledger", { preHandler: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/finance/ledger", { onRequest: guards.requirePermission("ledger:read"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const result = await listLedger(deps.db, { limit: p.pageSize, offset: p.offset });
     return {
@@ -118,7 +118,7 @@ export function registerFinanceRoutes(
     };
   });
 
-  app.get("/payouts", { preHandler: guards.requirePermission("payout:transition"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/payouts", { onRequest: guards.requirePermission("payout:transition"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const q = req.query as Record<string, unknown>;
     const status =
@@ -147,7 +147,7 @@ export function registerFinanceRoutes(
     };
   });
 
-  app.get("/me/payouts", { preHandler: guards.requirePermission("payout:read:own"), schema: { querystring: PageQuery } }, async (req) => {
+  app.get("/me/payouts", { onRequest: guards.requirePermission("payout:read:own"), schema: { querystring: PageQuery } }, async (req) => {
     const p = parsePageParams(req.query as Record<string, unknown>);
     const result = await listPayouts(deps.db, { limit: p.pageSize, offset: p.offset }, {
       beneficiaryUserId: req.authUser!.id
@@ -170,7 +170,7 @@ export function registerFinanceRoutes(
 
   app.post(
     "/payouts/:id/transitions",
-    { preHandler: guards.requirePermission("payout:transition"), schema: { body: PayoutTransitionBody } },
+    { onRequest: guards.requirePermission("payout:transition"), schema: { body: PayoutTransitionBody } },
     async (req) => {
       const { id } = req.params as { id: string };
       const b = req.body as Static<typeof PayoutTransitionBody>;
